@@ -2,33 +2,33 @@
 
 **A collaborative life-management app for small groups.**
 
-Studio Pair helps couples, roommates, families, and small teams coordinate the daily logistics of shared life -- from grocery lists and chore schedules to budgets, calendars, and goal tracking -- all in one private, offline-capable app.
+Studio Pair helps couples, roommates, families, and small teams coordinate the daily logistics of shared life: grocery lists, chore schedules, budgets, calendars, goal tracking, and more. All in one private, offline-capable app.
 
 ---
 
-## Tech Stack
+## Tech stack
 
 | Layer | Technology |
 |-------|-----------|
-| Mobile App | Flutter (Dart) |
-| Backend API | Dart with Pulsar Framework |
+| Mobile app | Flutter (Dart) |
+| Backend API | Dart with Shelf framework |
 | Database | PostgreSQL (server), SQLite via Drift (client) |
-| Shared Logic | Pure Dart package (`/shared`) |
+| Shared logic | Pure Dart package (`/shared`) |
 
-## Project Structure
+## Project structure
 
 ```
 studio-pair/
-├── app/              # Flutter mobile application
-├── backend/          # Dart backend API (Pulsar Framework)
-├── shared/           # Shared Dart package (models, DTOs, utilities)
-├── database/         # PostgreSQL migration scripts
-├── .github/          # GitHub templates, CI/CD, and config
-├── CHANGELOG.md      # Release history
-├── CONTRIBUTING.md   # Contribution guidelines
-├── CODE_OF_CONDUCT.md
-├── SECURITY.md       # Security policy and reporting
-└── LICENSE           # Proprietary license
+├── app/                       # Flutter mobile application
+├── backend/                   # Dart backend API server
+├── shared/                    # Shared Dart package (models, DTOs, utilities)
+├── database/                  # PostgreSQL migration scripts
+├── .github/                   # CI/CD workflows, templates, and community files
+│   ├── CONTRIBUTING.md
+│   ├── CODE_OF_CONDUCT.md
+│   └── SECURITY.md
+├── CHANGELOG.md               # Release history
+└── LICENSE                    # Proprietary license
 ```
 
 ## Prerequisites
@@ -48,16 +48,16 @@ dart --version
 psql --version
 ```
 
-## Getting Started
+## Getting started
 
-### 1. Clone the Repository
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/LennyObez/studio-pair.git
 cd studio-pair
 ```
 
-### 2. Install Dependencies
+### 2. Install dependencies
 
 ```bash
 # Shared package
@@ -73,7 +73,7 @@ cd ../app
 flutter pub get
 ```
 
-### 3. Database Setup
+### 3. Database setup
 
 Create a PostgreSQL database and apply migrations:
 
@@ -92,7 +92,7 @@ cp .env.example .env
 # Edit .env with your database credentials
 ```
 
-### 4. Run the Backend
+### 4. Run the backend
 
 ```bash
 cd backend
@@ -101,7 +101,7 @@ dart run bin/server.dart
 
 The API server will start on `http://localhost:8080` by default.
 
-### 5. Run the Mobile App
+### 5. Run the mobile app
 
 ```bash
 cd app
@@ -110,7 +110,7 @@ flutter run
 
 ## Development
 
-### Backend Development
+### Backend development
 
 ```bash
 cd backend
@@ -124,7 +124,7 @@ dart test
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-### App Development
+### App development
 
 ```bash
 cd app
@@ -138,7 +138,7 @@ flutter test
 dart run build_runner build --delete-conflicting-outputs
 ```
 
-### Shared Package
+### Shared package
 
 ```bash
 cd shared
@@ -149,23 +149,23 @@ dart test
 dart analyze
 ```
 
-## Architecture Overview
+## Architecture overview
 
 Studio Pair follows an **offline-first** architecture:
 
-- **Local-first data**: The mobile app stores all data locally using SQLite (via Drift). Users can read and write data without network connectivity.
-- **Background sync**: When online, the app syncs with the backend API. Conflict resolution uses a last-write-wins strategy with logical timestamps.
-- **Two-tier encryption**: Sensitive data is encrypted both in transit (TLS) and at rest. Group-level encryption keys ensure that data is only readable by group members.
-- **Shared package**: Core models, validation logic, and DTOs live in the `/shared` package, ensuring consistency between client and server.
+- **Local-first data**: the mobile app stores all data locally using SQLite (via Drift). Users can read and write data without network connectivity.
+- **Background sync**: when online, the app syncs with the backend API. Conflict resolution uses a last-write-wins strategy with logical timestamps.
+- **Two-tier encryption**: sensitive data is encrypted both in transit (TLS) and at rest. Group-level encryption keys ensure that data is only readable by group members.
+- **Shared package**: core models, validation logic, and DTOs live in the `/shared` package, ensuring consistency between client and server.
 
-### Data Flow
+### Data flow
 
 ```
 Flutter App  <-->  Local SQLite (Drift)
                         |
-                   Sync Engine
+                   Sync engine
                         |
-                   Dart Backend (Pulsar)  <-->  PostgreSQL
+                   Dart backend (Shelf)  <-->  PostgreSQL
 ```
 
 ## Testing
