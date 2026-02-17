@@ -1,0 +1,41 @@
+version: 2
+updates:
+  # Flutter app dependencies
+  - package-ecosystem: "pub"
+    directory: "/app"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "app"
+
+  # Backend dependencies
+  - package-ecosystem: "pub"
+    directory: "/backend"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # Shared package dependencies
+  - package-ecosystem: "pub"
+    directory: "/shared"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "shared"
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    labels:
+      - "dependencies"
+      - "ci"
