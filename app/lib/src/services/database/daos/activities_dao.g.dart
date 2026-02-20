@@ -1,0 +1,11 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'activities_dao.dart';
+
+// ignore_for_file: type=lint
+mixin _$ActivitiesDaoMixin on DatabaseAccessor<AppDatabase> {
+  $CachedActivitiesTable get cachedActivities =>
+      attachedDatabase.cachedActivities;
+  $CachedActivityVotesTable get cachedActivityVotes =>
+      attachedDatabase.cachedActivityVotes;
+}
