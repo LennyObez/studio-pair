@@ -1,0 +1,119 @@
+# ============================================
+# Studio Pair - .gitignore
+# ============================================
+
+# ---------- Dart / Flutter ----------
+.dart_tool/
+.packages
+build/
+.flutter-plugins
+.flutter-plugins-dependencies
+*.dart_tool
+pubspec.lock
+
+# Generated Dart files
+*.g.dart
+*.freezed.dart
+*.mocks.dart
+*.config.dart
+
+# Drift generated files
+*.drift.dart
+
+# ---------- Build Outputs ----------
+build/
+*.apk
+*.aab
+*.ipa
+*.dSYM.zip
+*.dSYM
+*.app
+*.exe
+*.msix
+*.appx
+
+# Flutter-specific
+app/android/app/debug
+app/android/app/profile
+app/android/app/release
+app/ios/Flutter/Flutter.framework
+app/ios/Flutter/Flutter.podspec
+app/ios/Flutter/Generated.xcconfig
+app/ios/Flutter/app.flx
+app/ios/Flutter/engine/
+app/ios/ServiceDefinitions.json
+app/ios/Runner/GeneratedPluginRegistrant.*
+
+# ---------- IDE / Editors ----------
+# IntelliJ / Android Studio
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Visual Studio Code
+.vscode/
+*.code-workspace
+
+# Xcode
+*.xcworkspace/
+*.xcuserdata/
+xcuserdata/
+
+# ---------- OS Files ----------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# ---------- Environment / Secrets ----------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.cert
+*.p12
+*.jks
+*.keystore
+secrets/
+
+# Firebase config files (contain API keys)
+**/google-services.json
+**/GoogleService-Info.plist
+
+# ---------- PostgreSQL ----------
+pgdata/
+*.sql.bak
+*.dump
+
+# ---------- Coverage ----------
+coverage/
+*.lcov
+lcov.info
+
+# ---------- Node (tooling) ----------
+node_modules/
+package-lock.json
+yarn.lock
+
+# ---------- Claude Code ----------
+CLAUDE.md
+
+# ---------- Miscellaneous ----------
+*.log
+*.tmp
+*.bak
+*.swp
+*.swo
+*.stackdump
+*~
+.cache/
+.temp/
+/.claude
