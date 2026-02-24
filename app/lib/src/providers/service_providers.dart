@@ -1,5 +1,18 @@
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:studio_pair/src/repositories/activities_repository.dart';
+import 'package:studio_pair/src/repositories/calendar_repository.dart';
+import 'package:studio_pair/src/repositories/cards_repository.dart';
+import 'package:studio_pair/src/repositories/charter_repository.dart';
+import 'package:studio_pair/src/repositories/files_repository.dart';
+import 'package:studio_pair/src/repositories/finances_repository.dart';
+import 'package:studio_pair/src/repositories/grocery_repository.dart';
+import 'package:studio_pair/src/repositories/memories_repository.dart';
+import 'package:studio_pair/src/repositories/messaging_repository.dart';
+import 'package:studio_pair/src/repositories/notifications_repository.dart';
+import 'package:studio_pair/src/repositories/polls_repository.dart';
+import 'package:studio_pair/src/repositories/reminders_repository.dart';
+import 'package:studio_pair/src/repositories/tasks_repository.dart';
 import 'package:studio_pair/src/services/api/activities_api.dart';
 import 'package:studio_pair/src/services/api/api_client.dart';
 import 'package:studio_pair/src/services/api/auth_api.dart';
@@ -200,6 +213,101 @@ final memoriesDaoProvider = Provider<MemoriesDao>((ref) {
   return MemoriesDao(ref.watch(appDatabaseProvider));
 });
 
+// ── Repositories ─────────────────────────────────────────────────────────
+
+final activitiesRepositoryProvider = Provider<ActivitiesRepository>((ref) {
+  return ActivitiesRepository(
+    ref.watch(activitiesApiProvider),
+    ref.watch(activitiesDaoProvider),
+  );
+});
+
+final tasksRepositoryProvider = Provider<TasksRepository>((ref) {
+  return TasksRepository(
+    ref.watch(tasksApiProvider),
+    ref.watch(tasksDaoProvider),
+  );
+});
+
+final calendarRepositoryProvider = Provider<CalendarRepository>((ref) {
+  return CalendarRepository(
+    ref.watch(calendarApiProvider),
+    ref.watch(calendarDaoProvider),
+  );
+});
+
+final groceryRepositoryProvider = Provider<GroceryRepository>((ref) {
+  return GroceryRepository(
+    ref.watch(groceryApiProvider),
+    ref.watch(groceryDaoProvider),
+  );
+});
+
+final messagingRepositoryProvider = Provider<MessagingRepository>((ref) {
+  return MessagingRepository(
+    ref.watch(messagingApiProvider),
+    ref.watch(messagesDaoProvider),
+  );
+});
+
+final remindersRepositoryProvider = Provider<RemindersRepository>((ref) {
+  return RemindersRepository(
+    ref.watch(remindersApiProvider),
+    ref.watch(remindersDaoProvider),
+  );
+});
+
+final notificationsRepositoryProvider = Provider<NotificationsRepository>((
+  ref,
+) {
+  return NotificationsRepository(
+    ref.watch(notificationsApiProvider),
+    ref.watch(notificationsDaoProvider),
+  );
+});
+
+final financesRepositoryProvider = Provider<FinancesRepository>((ref) {
+  return FinancesRepository(
+    ref.watch(financesApiProvider),
+    ref.watch(financesDaoProvider),
+  );
+});
+
+final charterRepositoryProvider = Provider<CharterRepository>((ref) {
+  return CharterRepository(
+    ref.watch(charterApiProvider),
+    ref.watch(charterDaoProvider),
+  );
+});
+
+final pollsRepositoryProvider = Provider<PollsRepository>((ref) {
+  return PollsRepository(
+    ref.watch(pollsApiProvider),
+    ref.watch(pollsDaoProvider),
+  );
+});
+
+final cardsRepositoryProvider = Provider<CardsRepository>((ref) {
+  return CardsRepository(
+    ref.watch(cardsApiProvider),
+    ref.watch(cardsDaoProvider),
+  );
+});
+
+final filesRepositoryProvider = Provider<FilesRepository>((ref) {
+  return FilesRepository(
+    ref.watch(filesApiProvider),
+    ref.watch(filesDaoProvider),
+  );
+});
+
+final memoriesRepositoryProvider = Provider<MemoriesRepository>((ref) {
+  return MemoriesRepository(
+    ref.watch(memoriesApiProvider),
+    ref.watch(memoriesDaoProvider),
+  );
+});
+
 // ── Encryption ───────────────────────────────────────────────────────────
 
 /// Encryption service provider (singleton via AppServices).
@@ -239,37 +347,9 @@ final purchaseServiceProvider = Provider<PurchaseService>((ref) {
 });
 
 /// Purchase state provider.
-final purchaseProvider = StateNotifierProvider<PurchaseNotifier, PurchaseState>(
-  (ref) {
-    return PurchaseNotifier(
-      entitlementsApi: ref.watch(entitlementsApiProvider),
-      purchaseService: ref.watch(purchaseServiceProvider),
-    );
-  },
+final purchaseProvider = AsyncNotifierProvider<PurchaseNotifier, PurchaseState>(
+  PurchaseNotifier.new,
 );
-
-// ── Error Extraction Helper ──────────────────────────────────────────────
-
-/// Extract a user-friendly error message from an exception.
-///
-/// Works with [DioException] (extracts [ApiError.message]) and falls back
-/// to [Exception.toString] for other types.
-String extractErrorMessage(Object error) {
-  if (error is Exception) {
-    final msg = error.toString();
-    // DioException wraps ApiError in its message field
-    if (msg.contains('ApiError')) {
-      final match = RegExp(r'ApiError\(\w+\): (.+)').firstMatch(msg);
-      if (match != null) return match.group(1)!;
-    }
-    // Strip "Exception: " prefix if present
-    if (msg.startsWith('Exception: ')) {
-      return msg.substring(11);
-    }
-    return msg;
-  }
-  return error.toString();
-}
 
 // ── Response Parsing Helper ─────────────────────────────────────────────
 

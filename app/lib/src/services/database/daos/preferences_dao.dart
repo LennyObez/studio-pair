@@ -1,4 +1,5 @@
 import 'package:drift/drift.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 import '../app_database.dart';
 
 part 'preferences_dao.g.dart';
@@ -23,39 +24,63 @@ class PreferencesDao extends DatabaseAccessor<AppDatabase>
   /// Sets a preference value. Inserts if the key does not exist,
   /// or updates the existing value.
   Future<void> setPreference(String key, String value) {
-    return into(appPreferences).insertOnConflictUpdate(
-      AppPreferencesCompanion.insert(key: key, value: value),
-    );
+    try {
+      return into(appPreferences).insertOnConflictUpdate(
+        AppPreferencesCompanion.insert(key: key, value: value),
+      );
+    } catch (e) {
+      throw StorageFailure('Failed to set preference: $e');
+    }
   }
 
   /// Retrieves a preference value by key, or null if not found.
   Future<String?> getPreference(String key) async {
-    final result = await (select(
-      appPreferences,
-    )..where((t) => t.key.equals(key))).getSingleOrNull();
-    return result?.value;
+    try {
+      final result = await (select(
+        appPreferences,
+      )..where((t) => t.key.equals(key))).getSingleOrNull();
+      return result?.value;
+    } catch (e) {
+      throw StorageFailure('Failed to get preference: $e');
+    }
   }
 
   /// Deletes a preference by key.
   Future<int> deletePreference(String key) {
-    return (delete(appPreferences)..where((t) => t.key.equals(key))).go();
+    try {
+      return (delete(appPreferences)..where((t) => t.key.equals(key))).go();
+    } catch (e) {
+      throw StorageFailure('Failed to delete preference: $e');
+    }
   }
 
   /// Watches a preference value for reactive updates.
   Stream<String?> watchPreference(String key) {
-    return (select(appPreferences)..where((t) => t.key.equals(key)))
-        .watchSingleOrNull()
-        .map((pref) => pref?.value);
+    try {
+      return (select(appPreferences)..where((t) => t.key.equals(key)))
+          .watchSingleOrNull()
+          .map((pref) => pref?.value);
+    } catch (e) {
+      throw StorageFailure('Failed to watch preference: $e');
+    }
   }
 
   /// Retrieves all stored preferences as a map.
   Future<Map<String, String>> getAllPreferences() async {
-    final results = await select(appPreferences).get();
-    return {for (final pref in results) pref.key: pref.value};
+    try {
+      final results = await select(appPreferences).get();
+      return {for (final pref in results) pref.key: pref.value};
+    } catch (e) {
+      throw StorageFailure('Failed to get all preferences: $e');
+    }
   }
 
   /// Clears all stored preferences.
   Future<int> clearAll() {
-    return delete(appPreferences).go();
+    try {
+      return delete(appPreferences).go();
+    } catch (e) {
+      throw StorageFailure('Failed to clear all preferences: $e');
+    }
   }
 }

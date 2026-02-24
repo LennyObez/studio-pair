@@ -53,7 +53,7 @@ class SyncService {
   SyncServiceStatus _currentStatus = SyncServiceStatus.synced;
   SyncServiceStatus get currentStatus => _currentStatus;
 
-  StreamSubscription<ConnectivityResult>? _connectivitySubscription;
+  StreamSubscription<List<ConnectivityResult>>? _connectivitySubscription;
   Timer? _syncTimer;
   bool _isSyncing = false;
   bool _isInitialized = false;
@@ -64,9 +64,10 @@ class SyncService {
     if (_isInitialized) return;
     _isInitialized = true;
     _connectivitySubscription = _connectivity.onConnectivityChanged.listen((
-      result,
+      results,
     ) {
-      if (result != ConnectivityResult.none) {
+      final isOnline = results.any((r) => r != ConnectivityResult.none);
+      if (isOnline) {
         _sync();
       } else {
         _updateStatus(SyncServiceStatus.offline);
@@ -140,8 +141,11 @@ class SyncService {
   Future<void> _sync() async {
     if (_isSyncing) return;
 
-    final connectivityResult = await _connectivity.checkConnectivity();
-    if (connectivityResult == ConnectivityResult.none) {
+    final connectivityResults = await _connectivity.checkConnectivity();
+    final isOnline = connectivityResults.any(
+      (r) => r != ConnectivityResult.none,
+    );
+    if (!isOnline) {
       _updateStatus(SyncServiceStatus.offline);
       return;
     }
