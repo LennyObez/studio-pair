@@ -5,6 +5,7 @@ library studio_pair_shared;
 
 export 'src/constants/constants.dart';
 export 'src/enums/enums.dart';
+export 'src/errors/app_failure.dart';
 export 'src/i18n/i18n.dart';
 export 'src/models/models.dart';
 export 'src/validators/validators.dart';

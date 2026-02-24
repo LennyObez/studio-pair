@@ -3,6 +3,7 @@ import 'dart:developer';
 import 'package:dio/dio.dart';
 import 'package:studio_pair/src/config/api_config.dart';
 import 'package:studio_pair/src/services/storage/secure_storage_service.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Dio-based API client with auth token management, error handling,
 /// logging, and retry logic.
@@ -68,14 +69,14 @@ class ApiClient {
     _dio.interceptors.add(
       InterceptorsWrapper(
         onError: (error, handler) {
-          final apiError = _parseError(error);
+          final failure = _parseError(error);
           handler.next(
             DioException(
               requestOptions: error.requestOptions,
               response: error.response,
               type: error.type,
-              error: apiError,
-              message: apiError.message,
+              error: failure,
+              message: failure.message,
             ),
           );
         },
@@ -124,34 +125,27 @@ class ApiClient {
     }
   }
 
-  ApiError _parseError(DioException error) {
+  AppFailure _parseError(DioException error) {
     switch (error.type) {
       case DioExceptionType.connectionTimeout:
       case DioExceptionType.sendTimeout:
       case DioExceptionType.receiveTimeout:
-        return const ApiError(
-          message: 'Connection timed out. Please try again.',
-          code: 'TIMEOUT',
-        );
+        return const NetworkFailure('Connection timed out. Please try again.');
       case DioExceptionType.connectionError:
-        return const ApiError(
-          message: 'No internet connection.',
-          code: 'NO_CONNECTION',
-        );
+        return const NetworkFailure('No internet connection.');
       case DioExceptionType.badResponse:
         final statusCode = error.response?.statusCode ?? 0;
         final data = error.response?.data;
         final message = data is Map ? data['message'] as String? : null;
-        return ApiError(
-          message: message ?? 'Server error ($statusCode)',
-          code: 'HTTP_$statusCode',
-          statusCode: statusCode,
-        );
+        return switch (statusCode) {
+          401 || 403 => AuthFailure(message ?? 'Authentication failed'),
+          404 => NotFoundFailure(message ?? 'Resource not found'),
+          400 || 422 => ValidationFailure(message ?? 'Validation failed'),
+          >= 500 => ServerFailure(message ?? 'Server error ($statusCode)'),
+          _ => UnknownFailure(message ?? 'HTTP error ($statusCode)'),
+        };
       default:
-        return ApiError(
-          message: error.message ?? 'An unexpected error occurred.',
-          code: 'UNKNOWN',
-        );
+        return UnknownFailure(error.message ?? 'An unexpected error occurred.');
     }
   }
 
@@ -227,6 +221,10 @@ class ApiClient {
 }
 
 /// Structured API error.
+///
+/// Deprecated: Use [AppFailure] subtypes instead. This class is retained
+/// for backward compatibility and will be removed in a future release.
+@Deprecated('Use AppFailure subtypes from studio_pair_shared instead')
 class ApiError {
   const ApiError({required this.message, required this.code, this.statusCode});
 
