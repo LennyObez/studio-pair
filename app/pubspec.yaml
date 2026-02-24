@@ -44,7 +44,7 @@ dependencies:
   json_annotation: ^4.8.1
   timeago: ^3.6.1
   url_launcher: ^6.2.2
-  share_plus: ^7.2.1
+  share_plus: ^10.0.0
   image_picker: ^1.0.5
 
   # Charts
