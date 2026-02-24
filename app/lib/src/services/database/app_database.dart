@@ -395,7 +395,7 @@ class AppDatabase extends _$AppDatabase {
   AppDatabase() : super(_openConnection());
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   @override
   MigrationStrategy get migration => MigrationStrategy(
@@ -410,6 +410,93 @@ class AppDatabase extends _$AppDatabase {
         await m.createTable(cachedCards);
         await m.createTable(cachedFiles);
         await m.createTable(cachedMemories);
+      }
+      if (from < 3) {
+        // Add indexes for frequently queried columns
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_space_memberships_space ON cached_space_memberships(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_space_memberships_user ON cached_space_memberships(user_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_activities_space ON cached_activities(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_activities_created_by ON cached_activities(created_by)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_activity_votes_activity ON cached_activity_votes(activity_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_calendar_events_space ON cached_calendar_events(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_calendar_events_start ON cached_calendar_events(start_at)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_tasks_space ON cached_tasks(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_tasks_status ON cached_tasks(status)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_reminders_space ON cached_reminders(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_reminders_trigger ON cached_reminders(trigger_at)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_grocery_lists_space ON cached_grocery_lists(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_grocery_items_list ON cached_grocery_items(list_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_notifications_user ON cached_notifications(user_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_notifications_read ON cached_notifications(is_read)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_conversations_space ON cached_conversations(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_messages_conversation ON cached_messages(conversation_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_messages_created ON cached_messages(created_at)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_finance_entries_space ON cached_finance_entries(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_finance_entries_date ON cached_finance_entries(date)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_charters_space ON cached_charters(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_polls_space ON cached_polls(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_cards_space ON cached_cards(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_files_space ON cached_files(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_files_folder ON cached_files(folder_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_memories_space ON cached_memories(space_id)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_memories_date ON cached_memories(memory_date)',
+        );
+        await customStatement(
+          'CREATE INDEX IF NOT EXISTS idx_sync_queue_operation ON sync_queue(operation)',
+        );
       }
     },
   );
