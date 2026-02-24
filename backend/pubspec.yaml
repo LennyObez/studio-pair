@@ -13,7 +13,7 @@ dependencies:
   postgres: ^3.1.1
   dotenv: ^4.2.0
   json_annotation: ^4.8.1
-  uuid: ^4.2.1
+  uuid: ^4.5.3
   crypto: ^3.0.3
   pointycastle: ^3.7.3
   jaguar_jwt: ^3.0.0
