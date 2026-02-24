@@ -13,6 +13,7 @@ import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
 import 'package:studio_pair/src/widgets/common/sp_search_bar.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Vault screen for password/credential storage, grouped by domain.
 class VaultScreen extends ConsumerStatefulWidget {
@@ -30,7 +31,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
   }
 
   void _loadEntries() {
-    final spaceId = ref.read(spaceProvider).currentSpace?.id;
+    final spaceId = ref.read(spaceProvider).valueOrNull?.currentSpace?.id;
     if (spaceId != null) {
       ref.read(vaultProvider.notifier).loadEntries(spaceId);
     }
@@ -193,7 +194,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
         return;
       }
 
-      final spaceId = ref.read(spaceProvider).currentSpace?.id;
+      final spaceId = ref.read(spaceProvider).valueOrNull?.currentSpace?.id;
       if (spaceId == null) {
         titleController.dispose();
         usernameController.dispose();
@@ -229,10 +230,13 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
           SnackBar(content: Text(context.l10n.translate('vaultEntryAdded'))),
         );
       } else {
-        final error = ref.read(vaultProvider).error;
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(error ?? 'Failed to add vault entry')),
-        );
+        final asyncState = ref.read(vaultProvider);
+        final error = asyncState.error is AppFailure
+            ? (asyncState.error as AppFailure).message
+            : 'Failed to add vault entry';
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(error)));
       }
     }
 
@@ -272,7 +276,7 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(vaultProvider);
+    final asyncVault = ref.watch(vaultProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -296,11 +300,11 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
             child: SpSearchBar(
               hintText: 'Search vault entries...',
               onChanged: (query) {
-                ref.read(vaultProvider.notifier).setSearchQuery(query);
+                ref.read(vaultSearchQueryProvider.notifier).state = query;
               },
             ),
           ),
-          Expanded(child: _buildBody(state, theme)),
+          Expanded(child: _buildBody(asyncVault, theme)),
         ],
       ),
       floatingActionButton: FloatingActionButton(
@@ -311,19 +315,25 @@ class _VaultScreenState extends ConsumerState<VaultScreen> {
     );
   }
 
-  Widget _buildBody(VaultState state, ThemeData theme) {
-    if (state.isLoading && state.entries.isEmpty) {
+  Widget _buildBody(AsyncValue<List<VaultEntry>> asyncVault, ThemeData theme) {
+    final entries = asyncVault.valueOrNull ?? [];
+
+    if (asyncVault.isLoading && entries.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null) {
-      return SpErrorWidget(message: state.error!, onRetry: _loadEntries);
+    if (asyncVault.hasError && entries.isEmpty) {
+      final errorMessage = asyncVault.error is AppFailure
+          ? (asyncVault.error as AppFailure).message
+          : '${asyncVault.error}';
+      return SpErrorWidget(message: errorMessage, onRetry: _loadEntries);
     }
 
     final filteredEntries = ref.watch(vaultEntriesProvider);
+    final searchQuery = ref.watch(vaultSearchQueryProvider);
 
     if (filteredEntries.isEmpty) {
-      if (state.searchQuery.isNotEmpty) {
+      if (searchQuery.isNotEmpty) {
         return SpEmptyState(
           icon: Icons.search_off,
           title: context.l10n.translate('noResults'),
@@ -495,7 +505,11 @@ class _VaultGroupCardState extends ConsumerState<_VaultGroupCard> {
                   IconButton(
                     icon: const Icon(Icons.copy, size: 18),
                     onPressed: () async {
-                      final spaceId = ref.read(spaceProvider).currentSpace?.id;
+                      final spaceId = ref
+                          .read(spaceProvider)
+                          .valueOrNull
+                          ?.currentSpace
+                          ?.id;
                       if (spaceId == null) return;
                       try {
                         final response = await ref

@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/activities_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
@@ -92,17 +92,6 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
   };
 
   @override
-  void initState() {
-    super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        ref.read(activitiesProvider.notifier).loadActivities(spaceId);
-      }
-    });
-  }
-
-  @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
@@ -111,14 +100,15 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final state = ref.watch(activitiesProvider);
+    final asyncActivities = ref.watch(activitiesProvider);
     final filteredActivities = ref.watch(activityListProvider);
     final spaceId = ref.watch(currentSpaceProvider)?.id;
+    final currentFilter = ref.watch(activityCategoryFilter);
 
     // Determine which display category matches the current provider filter
     final selectedCategory = _categoryToValue.entries
         .firstWhere(
-          (e) => e.value == state.selectedCategory,
+          (e) => e.value == currentFilter,
           orElse: () => const MapEntry('All', 'all'),
         )
         .key;
@@ -139,7 +129,7 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
               controller: _searchController,
               hintText: context.l10n.translate('searchActivities'),
               onChanged: (query) {
-                ref.read(activitiesProvider.notifier).setSearchQuery(query);
+                ref.read(activitySearchQuery.notifier).state = query;
               },
             ),
           ),
@@ -174,9 +164,8 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
                     ],
                   ),
                   onSelected: (_) {
-                    ref
-                        .read(activitiesProvider.notifier)
-                        .setCategory(_categoryToValue[category] ?? 'all');
+                    ref.read(activityCategoryFilter.notifier).state =
+                        _categoryToValue[category] ?? 'all';
                   },
                 );
               },
@@ -188,7 +177,7 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
           Expanded(
             child: _buildBody(
               theme: theme,
-              state: state,
+              asyncActivities: asyncActivities,
               filteredActivities: filteredActivities,
               spaceId: spaceId,
             ),
@@ -205,22 +194,21 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
 
   Widget _buildBody({
     required ThemeData theme,
-    required ActivitiesState state,
-    required List<Activity> filteredActivities,
+    required AsyncValue<List<CachedActivity>> asyncActivities,
+    required List<CachedActivity> filteredActivities,
     required String? spaceId,
   }) {
-    if (state.isLoading && state.activities.isEmpty) {
+    if (asyncActivities.isLoading &&
+        (asyncActivities.valueOrNull?.isEmpty ?? true)) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.activities.isEmpty) {
+    if (asyncActivities.hasError &&
+        (asyncActivities.valueOrNull?.isEmpty ?? true)) {
       return SpErrorWidget(
-        message: state.error!,
-        onRetry: () {
-          if (spaceId != null) {
-            ref.read(activitiesProvider.notifier).loadActivities(spaceId);
-          }
-        },
+        message: asyncActivities.error.toString(),
+        failure: asyncActivities.error,
+        onRetry: () => ref.invalidate(activitiesProvider),
       );
     }
 
@@ -236,9 +224,7 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        if (spaceId != null) {
-          await ref.read(activitiesProvider.notifier).loadActivities(spaceId);
-        }
+        ref.invalidate(activitiesProvider);
       },
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -393,7 +379,7 @@ class _ActivitiesScreenState extends ConsumerState<ActivitiesScreen> {
 class _ActivityCard extends StatelessWidget {
   const _ActivityCard({required this.activity, required this.onVote});
 
-  final Activity activity;
+  final CachedActivity activity;
   final void Function(int score) onVote;
 
   Color get _statusColor {
@@ -465,7 +451,11 @@ class _ActivityCard extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text(activity.category ?? context.l10n.translate('uncategorized')),
+            Text(
+              activity.category.isNotEmpty
+                  ? activity.category
+                  : context.l10n.translate('uncategorized'),
+            ),
             const SizedBox(height: 4),
             Row(
               children: [
@@ -485,29 +475,6 @@ class _ActivityCard extends StatelessWidget {
                     ),
                   ),
                 ),
-                if (activity.averageRating != null &&
-                    activity.averageRating! > 0) ...[
-                  const SizedBox(width: 8),
-                  Semantics(
-                    button: true,
-                    label:
-                        'Rate activity, current rating ${activity.averageRating!.toStringAsFixed(1)}',
-                    child: GestureDetector(
-                      onTap: () => onVote(5),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(Icons.star, size: 14, color: Colors.amber[600]),
-                          const SizedBox(width: 2),
-                          Text(
-                            activity.averageRating!.toStringAsFixed(1),
-                            style: theme.textTheme.labelSmall,
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
               ],
             ),
           ],

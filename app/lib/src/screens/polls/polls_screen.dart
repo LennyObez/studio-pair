@@ -1,14 +1,18 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/polls_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Polls screen with active polls and past results.
 class PollsScreen extends ConsumerStatefulWidget {
@@ -26,16 +30,6 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _loadPolls();
-    });
-  }
-
-  void _loadPolls() {
-    final spaceId = ref.read(spaceProvider).currentSpace?.id;
-    if (spaceId != null) {
-      ref.read(pollsProvider.notifier).loadPolls(spaceId);
-    }
   }
 
   @override
@@ -188,7 +182,7 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
         return;
       }
 
-      final spaceId = ref.read(spaceProvider).currentSpace?.id;
+      final spaceId = ref.read(spaceProvider).valueOrNull?.currentSpace?.id;
       if (spaceId == null) {
         questionController.dispose();
         for (final c in optionControllers) {
@@ -197,6 +191,15 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
         return;
       }
 
+      // Convert option labels to the expected format
+      final options = optionLabels
+          .asMap()
+          .entries
+          .map(
+            (e) => <String, dynamic>{'label': e.value, 'display_order': e.key},
+          )
+          .toList();
+
       final success = await ref
           .read(pollsProvider.notifier)
           .createPoll(
@@ -204,7 +207,7 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
             question: question,
             type: 'single',
             isAnonymous: false,
-            optionLabels: optionLabels,
+            options: options,
           );
 
       if (!mounted) {
@@ -220,7 +223,10 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
           SnackBar(content: Text(context.l10n.translate('pollCreated'))),
         );
       } else {
-        final error = ref.read(pollsProvider).error;
+        final asyncState = ref.read(pollsProvider);
+        final error = asyncState.error is AppFailure
+            ? (asyncState.error as AppFailure).message
+            : null;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(
@@ -239,8 +245,10 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(pollsProvider);
-    final spaceId = ref.watch(spaceProvider).currentSpace?.id ?? '';
+    final asyncPolls = ref.watch(pollsProvider);
+    final spaceId =
+        ref.watch(spaceProvider).valueOrNull?.currentSpace?.id ?? '';
+    final polls = asyncPolls.valueOrNull ?? <CachedPoll>[];
 
     return Scaffold(
       appBar: SpAppBar(
@@ -254,20 +262,25 @@ class _PollsScreenState extends ConsumerState<PollsScreen>
           ],
         ),
       ),
-      body: state.isLoading
+      body: asyncPolls.isLoading && polls.isEmpty
           ? const Center(child: SpLoading())
-          : state.error != null
-          ? SpErrorWidget(message: state.error!, onRetry: _loadPolls)
+          : asyncPolls.hasError && polls.isEmpty
+          ? SpErrorWidget(
+              message: asyncPolls.error is AppFailure
+                  ? (asyncPolls.error as AppFailure).message
+                  : '${asyncPolls.error}',
+              onRetry: () => ref.invalidate(pollsProvider),
+            )
           : TabBarView(
               controller: _tabController,
               children: [
                 _PollsList(
-                  polls: state.polls.where((p) => !p.isClosed).toList(),
+                  polls: polls.where((p) => p.isActive).toList(),
                   spaceId: spaceId,
                   isActive: true,
                 ),
                 _PollsList(
-                  polls: state.polls.where((p) => p.isClosed).toList(),
+                  polls: polls.where((p) => !p.isActive).toList(),
                   spaceId: spaceId,
                   isActive: false,
                 ),
@@ -289,7 +302,7 @@ class _PollsList extends ConsumerWidget {
     required this.isActive,
   });
 
-  final List<Poll> polls;
+  final List<CachedPoll> polls;
   final String spaceId;
   final bool isActive;
 
@@ -327,13 +340,39 @@ class _PollCard extends ConsumerWidget {
     required this.theme,
   });
 
-  final Poll poll;
+  final CachedPoll poll;
   final String spaceId;
   final ThemeData theme;
 
+  /// Parse the options JSON string into a list of maps.
+  List<Map<String, dynamic>> _parseOptions() {
+    try {
+      final decoded = jsonDecode(poll.options) as List;
+      return decoded.cast<Map<String, dynamic>>();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  /// Parse the votes JSON string into a map.
+  Map<String, dynamic> _parseVotes() {
+    if (poll.votes == null) return {};
+    try {
+      return jsonDecode(poll.votes!) as Map<String, dynamic>;
+    } catch (_) {
+      return {};
+    }
+  }
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final isActive = !poll.isClosed;
+    final isActive = poll.isActive;
+    final options = _parseOptions();
+    final votes = _parseVotes();
+    final totalVotes = votes.values.fold<int>(
+      0,
+      (sum, v) => sum + ((v as num?)?.toInt() ?? 0),
+    );
 
     return Card(
       margin: const EdgeInsets.only(bottom: AppSpacing.md),
@@ -374,8 +413,13 @@ class _PollCard extends ConsumerWidget {
               ],
             ),
             const SizedBox(height: AppSpacing.md),
-            ...poll.options.map((option) {
-              final percentage = option.percentage.round();
+            ...options.map((option) {
+              final optionId = option['id'] as String? ?? '';
+              final label = option['label'] as String? ?? '';
+              final voteCount = (votes[optionId] as num?)?.toInt() ?? 0;
+              final percentage = totalVotes > 0
+                  ? (voteCount / totalVotes * 100).round()
+                  : 0;
               return Padding(
                 padding: const EdgeInsets.only(bottom: AppSpacing.sm),
                 child: InkWell(
@@ -385,7 +429,7 @@ class _PollCard extends ConsumerWidget {
                           ref.read(pollsProvider.notifier).vote(
                             spaceId,
                             poll.id,
-                            [option.id],
+                            [optionId],
                           );
                         }
                       : null,
@@ -393,18 +437,18 @@ class _PollCard extends ConsumerWidget {
                     padding: const EdgeInsets.all(AppSpacing.sm),
                     decoration: BoxDecoration(
                       border: Border.all(
-                        color: option.voteCount > 0
+                        color: voteCount > 0
                             ? AppColors.modulePolls
                             : theme.colorScheme.outlineVariant,
                       ),
                       borderRadius: BorderRadius.circular(AppSpacing.radiusMd),
-                      color: option.voteCount > 0
+                      color: voteCount > 0
                           ? AppColors.modulePolls.withValues(alpha: 0.08)
                           : null,
                     ),
                     child: Row(
                       children: [
-                        if (option.voteCount > 0)
+                        if (voteCount > 0)
                           const Icon(
                             Icons.check_circle,
                             size: 18,
@@ -414,10 +458,7 @@ class _PollCard extends ConsumerWidget {
                           const Icon(Icons.radio_button_unchecked, size: 18),
                         const SizedBox(width: AppSpacing.sm),
                         Expanded(
-                          child: Text(
-                            option.label,
-                            style: theme.textTheme.bodyMedium,
-                          ),
+                          child: Text(label, style: theme.textTheme.bodyMedium),
                         ),
                         Text(
                           '$percentage%',
@@ -436,16 +477,16 @@ class _PollCard extends ConsumerWidget {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  '${poll.totalVotes} ${context.l10n.translate('votes')}',
+                  '$totalVotes ${context.l10n.translate('votes')}',
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
                 Text(
-                  poll.isClosed
+                  !isActive
                       ? context.l10n.translate('closed')
-                      : poll.deadline != null
-                      ? 'Ends ${poll.deadline}'
+                      : poll.expiresAt != null
+                      ? 'Ends ${poll.expiresAt}'
                       : context.l10n.translate('noDeadline'),
                   style: theme.textTheme.labelSmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,

@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/grocery_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Grocery list screen with checkable items and category grouping.
 class GroceryScreen extends ConsumerStatefulWidget {
@@ -24,17 +25,6 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
   final _addController = TextEditingController();
 
   @override
-  void initState() {
-    super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        ref.read(groceryProvider.notifier).loadLists(spaceId);
-      }
-    });
-  }
-
-  @override
   void dispose() {
     _addController.dispose();
     super.dispose();
@@ -44,20 +34,23 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     final name = _addController.text.trim();
     if (name.isEmpty) return;
 
-    final currentList = ref.read(groceryProvider).currentList;
-    if (currentList == null) return;
+    final currentListId = ref.read(currentGroceryListIdProvider);
+    if (currentListId == null) return;
 
     ref
-        .read(groceryProvider.notifier)
-        .addItem(spaceId, currentList.id, name: name);
+        .read(groceryItemsProvider.notifier)
+        .addItem(spaceId, currentListId, name: name);
     _addController.clear();
   }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final state = ref.watch(groceryProvider);
-    final items = ref.watch(groceryItemsProvider);
+    final asyncLists = ref.watch(groceryListsProvider);
+    final asyncItems = ref.watch(groceryItemsProvider);
+    final lists = asyncLists.valueOrNull ?? [];
+    final items = asyncItems.valueOrNull ?? [];
+    final currentListId = ref.watch(currentGroceryListIdProvider);
     final spaceId = ref.watch(currentSpaceProvider)?.id;
 
     return Scaffold(
@@ -68,10 +61,10 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           IconButton(
             icon: const Icon(Icons.delete_sweep),
             onPressed: () {
-              if (spaceId != null && state.currentList != null) {
+              if (spaceId != null && currentListId != null) {
                 ref
-                    .read(groceryProvider.notifier)
-                    .clearChecked(spaceId, state.currentList!.id);
+                    .read(groceryItemsProvider.notifier)
+                    .clearChecked(spaceId, currentListId);
               }
             },
             tooltip: 'Clear completed',
@@ -100,27 +93,38 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
           ),
         ],
       ),
-      body: _buildBody(theme, state, items, spaceId),
+      body: _buildBody(
+        theme,
+        asyncLists,
+        lists,
+        items,
+        currentListId,
+        spaceId,
+        asyncItems.isLoading,
+      ),
     );
   }
 
   Widget _buildBody(
     ThemeData theme,
-    GroceryState state,
-    List<GroceryItem> items,
+    AsyncValue<List<CachedGroceryList>> asyncLists,
+    List<CachedGroceryList> lists,
+    List<CachedGroceryItem> items,
+    String? currentListId,
     String? spaceId,
+    bool itemsLoading,
   ) {
-    if (state.isLoading && state.lists.isEmpty && state.items.isEmpty) {
+    if (asyncLists.isLoading && lists.isEmpty && items.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.lists.isEmpty) {
+    if (asyncLists.hasError && lists.isEmpty) {
       return SpErrorWidget(
-        message: state.error!,
+        message: asyncLists.error is AppFailure
+            ? (asyncLists.error as AppFailure).message
+            : '${asyncLists.error}',
         onRetry: () {
-          if (spaceId != null) {
-            ref.read(groceryProvider.notifier).loadLists(spaceId);
-          }
+          ref.invalidate(groceryListsProvider);
         },
       );
     }
@@ -128,53 +132,23 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     return Column(
       children: [
         // List selector
-        if (state.lists.isNotEmpty)
+        if (lists.isNotEmpty)
           SizedBox(
             height: 48,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
               separatorBuilder: (_, __) => const SizedBox(width: AppSpacing.sm),
-              itemCount: state.lists.length,
+              itemCount: lists.length,
               itemBuilder: (context, index) {
-                final list = state.lists[index];
-                final isSelected = state.currentList?.id == list.id;
+                final list = lists[index];
+                final isSelected = currentListId == list.id;
                 return FilterChip(
                   selected: isSelected,
-                  label: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(list.name),
-                      const SizedBox(width: 4),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 6,
-                          vertical: 1,
-                        ),
-                        decoration: BoxDecoration(
-                          color: AppColors.moduleGrocery.withValues(
-                            alpha: 0.12,
-                          ),
-                          borderRadius: BorderRadius.circular(
-                            AppSpacing.radiusRound,
-                          ),
-                        ),
-                        child: Text(
-                          '${list.uncheckedCount}',
-                          style: theme.textTheme.labelSmall?.copyWith(
-                            color: AppColors.moduleGrocery,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
+                  label: Text(list.name),
                   onSelected: (_) {
-                    ref.read(groceryProvider.notifier).selectList(list.id);
-                    if (spaceId != null) {
-                      ref
-                          .read(groceryProvider.notifier)
-                          .loadItems(spaceId, list.id);
-                    }
+                    ref.read(currentGroceryListIdProvider.notifier).state =
+                        list.id;
                   },
                 );
               },
@@ -207,18 +181,27 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
         const SizedBox(height: AppSpacing.sm),
 
         // Items list
-        Expanded(child: _buildItemsList(theme, state, items, spaceId)),
+        Expanded(
+          child: _buildItemsList(
+            theme,
+            items,
+            currentListId,
+            spaceId,
+            itemsLoading,
+          ),
+        ),
       ],
     );
   }
 
   Widget _buildItemsList(
     ThemeData theme,
-    GroceryState state,
-    List<GroceryItem> items,
+    List<CachedGroceryItem> items,
+    String? currentListId,
     String? spaceId,
+    bool isLoading,
   ) {
-    if (state.currentList == null) {
+    if (currentListId == null) {
       return SpEmptyState(
         icon: Icons.list_alt,
         title: context.l10n.translate('selectAList'),
@@ -226,7 +209,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
       );
     }
 
-    if (state.isLoading && items.isEmpty) {
+    if (isLoading && items.isEmpty) {
       return const Center(child: SpLoading());
     }
 
@@ -239,7 +222,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
     }
 
     // Group items by category
-    final grouped = <String, List<GroceryItem>>{};
+    final grouped = <String, List<CachedGroceryItem>>{};
     for (final item in items) {
       final category = item.category ?? 'Other';
       grouped.putIfAbsent(category, () => []).add(item);
@@ -304,7 +287,7 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                 onDismissed: (_) {
                   if (spaceId != null) {
                     ref
-                        .read(groceryProvider.notifier)
+                        .read(groceryItemsProvider.notifier)
                         .deleteItem(spaceId, item.id);
                   }
                 },
@@ -318,11 +301,11 @@ class _GroceryScreenState extends ConsumerState<GroceryScreen> {
                         if (spaceId == null) return;
                         if (item.isChecked) {
                           ref
-                              .read(groceryProvider.notifier)
+                              .read(groceryItemsProvider.notifier)
                               .uncheckItem(spaceId, item.id);
                         } else {
                           ref
-                              .read(groceryProvider.notifier)
+                              .read(groceryItemsProvider.notifier)
                               .checkItem(spaceId, item.id);
                         }
                       },

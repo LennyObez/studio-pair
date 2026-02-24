@@ -98,11 +98,12 @@ class _OnboardingScreenState extends ConsumerState<OnboardingScreen> {
     if (success && mounted) {
       context.go('/');
     } else if (mounted) {
-      final error = ref.read(spaceProvider).error;
+      final spaceState = ref.read(spaceProvider);
+      final error = spaceState.error;
       if (error != null) {
         ScaffoldMessenger.of(
           context,
-        ).showSnackBar(SnackBar(content: Text(error)));
+        ).showSnackBar(SnackBar(content: Text(error.toString())));
       }
     }
   }
@@ -475,7 +476,7 @@ class _InvitePage extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final currentSpace = ref.watch(spaceProvider).currentSpace;
+    final currentSpace = ref.watch(spaceProvider).valueOrNull?.currentSpace;
 
     return Padding(
       padding: const EdgeInsets.all(AppSpacing.lg),

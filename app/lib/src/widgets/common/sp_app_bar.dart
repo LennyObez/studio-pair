@@ -81,8 +81,8 @@ class SpAppBar extends StatelessWidget implements PreferredSizeWidget {
 class _SpaceSelector extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final spaceState = ref.watch(spaceProvider);
-    final currentSpace = spaceState.currentSpace;
+    final spaceData = ref.watch(spaceProvider).valueOrNull;
+    final currentSpace = spaceData?.currentSpace;
     return PopupMenuButton<String>(
       icon: Row(
         mainAxisSize: MainAxisSize.min,
@@ -112,7 +112,7 @@ class _SpaceSelector extends ConsumerWidget {
       },
       itemBuilder: (context) => [
         // List existing spaces
-        ...spaceState.spaces.map(
+        ...(spaceData?.spaces ?? []).map(
           (space) => PopupMenuItem(
             value: space.id,
             child: Row(
@@ -129,7 +129,7 @@ class _SpaceSelector extends ConsumerWidget {
             ),
           ),
         ),
-        if (spaceState.spaces.isEmpty)
+        if (spaceData == null || spaceData.spaces.isEmpty)
           PopupMenuItem(
             enabled: false,
             value: '_none',

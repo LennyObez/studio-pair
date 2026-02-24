@@ -9,6 +9,7 @@ import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart' hide HealthProfile;
 
 /// Health dashboard with body measurements, graphs, and sleep tracking.
 class HealthScreen extends ConsumerStatefulWidget {
@@ -178,10 +179,11 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
                         ),
                       );
                     } else {
-                      final error = ref.read(healthProvider).error;
-                      messenger.showSnackBar(
-                        SnackBar(content: Text(error ?? 'Failed to log entry')),
-                      );
+                      final asyncState = ref.read(healthProvider);
+                      final error = asyncState.error is AppFailure
+                          ? (asyncState.error as AppFailure).message
+                          : 'Failed to log entry';
+                      messenger.showSnackBar(SnackBar(content: Text(error)));
                     }
                   },
                   child: Text(context.l10n.translate('log')),
@@ -312,7 +314,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(healthProvider);
+    final asyncHealth = ref.watch(healthProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -320,20 +322,22 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
         title: context.l10n.translate('health'),
         showBackButton: true,
       ),
-      body: _buildBody(state, theme),
+      body: _buildBody(asyncHealth, theme),
     );
   }
 
-  Widget _buildBody(HealthState state, ThemeData theme) {
-    if (state.isLoading &&
-        state.profile == null &&
-        state.measurements.isEmpty) {
+  Widget _buildBody(AsyncValue<HealthData> asyncHealth, ThemeData theme) {
+    final data = asyncHealth.valueOrNull ?? const HealthData();
+
+    if (asyncHealth.isLoading &&
+        data.profile == null &&
+        data.measurements.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null &&
-        state.profile == null &&
-        state.measurements.isEmpty) {
+    if (asyncHealth.hasError &&
+        data.profile == null &&
+        data.measurements.isEmpty) {
       // Show empty dashboard instead of error when offline/no backend
       return SingleChildScrollView(
         padding: const EdgeInsets.all(AppSpacing.md),
@@ -395,10 +399,10 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
       );
     }
 
-    final profile = state.profile;
+    final profile = data.profile;
     final bmi = _calculateBMI(profile);
-    final latestWeight = _latestOfType(state.measurements, 'weight');
-    final latestSleep = _latestOfType(state.measurements, 'sleep');
+    final latestWeight = _latestOfType(data.measurements, 'weight');
+    final latestSleep = _latestOfType(data.measurements, 'sleep');
 
     // Use measurement weight if available, otherwise use profile weight
     final displayWeight = latestWeight?.value ?? profile?.weight;
@@ -424,7 +428,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
                   onTap: () => _showMetricDetailSheet(
                     context,
                     'weight',
-                    state.measurements,
+                    data.measurements,
                     theme,
                   ),
                   child: _MetricCard(
@@ -481,7 +485,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
               ),
               borderRadius: BorderRadius.circular(AppSpacing.radiusLg),
             ),
-            child: _buildWeightTrend(state.measurements, theme),
+            child: _buildWeightTrend(data.measurements, theme),
           ),
           const SizedBox(height: AppSpacing.lg),
 
@@ -497,7 +501,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
             onTap: () => _showMetricDetailSheet(
               context,
               'sleep',
-              state.measurements,
+              data.measurements,
               theme,
             ),
             child: _buildSleepCard(latestSleep, theme),
@@ -509,7 +513,7 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
             width: double.infinity,
             height: 48,
             child: ElevatedButton.icon(
-              onPressed: state.isLoading
+              onPressed: asyncHealth.isLoading
                   ? null
                   : () async {
                       final messenger = ScaffoldMessenger.of(context);
@@ -527,18 +531,17 @@ class _HealthScreenState extends ConsumerState<HealthScreen> {
                         );
                       } else {
                         if (!mounted) return;
-                        final error = ref.read(healthProvider).error;
-                        messenger.showSnackBar(
-                          SnackBar(
-                            content: Text(
-                              error ?? 'Failed to sync health data',
-                            ),
-                          ),
-                        );
+                        final asyncState = ref.read(healthProvider);
+                        final error = asyncState.error is AppFailure
+                            ? (asyncState.error as AppFailure).message
+                            : 'Failed to sync health data';
+                        messenger.showSnackBar(SnackBar(content: Text(error)));
                       }
                     },
               icon: const Icon(Icons.sync),
-              label: Text(state.isLoading ? 'Syncing...' : 'Sync from device'),
+              label: Text(
+                asyncHealth.isLoading ? 'Syncing...' : 'Sync from device',
+              ),
             ),
           ),
           const SizedBox(height: AppSpacing.sm),

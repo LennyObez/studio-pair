@@ -1,14 +1,13 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/reminders_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
-
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
 
 /// Reminders screen with upcoming and past reminders.
@@ -27,10 +26,6 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      ref.read(remindersProvider.notifier).loadReminders();
-    });
   }
 
   @override
@@ -41,7 +36,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(remindersProvider);
+    final asyncReminders = ref.watch(remindersProvider);
+    final reminders = asyncReminders.valueOrNull ?? [];
 
     return Scaffold(
       appBar: SpAppBar(
@@ -55,7 +51,7 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
           ],
         ),
       ),
-      body: _buildBody(state),
+      body: _buildBody(asyncReminders, reminders),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showCreateReminderDialog(context),
         tooltip: context.l10n.translate('addReminder'),
@@ -64,12 +60,15 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
     );
   }
 
-  Widget _buildBody(RemindersState state) {
-    if (state.isLoading && state.reminders.isEmpty) {
+  Widget _buildBody(
+    AsyncValue<List<CachedReminder>> asyncReminders,
+    List<CachedReminder> reminders,
+  ) {
+    if (asyncReminders.isLoading && reminders.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.reminders.isEmpty) {
+    if (asyncReminders.hasError && reminders.isEmpty) {
       // Show empty state instead of error when offline/no backend
       return TabBarView(
         controller: _tabController,
@@ -91,8 +90,8 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
     return TabBarView(
       controller: _tabController,
       children: [
-        _UpcomingReminders(reminders: state.reminders),
-        _PastReminders(reminders: state.reminders),
+        _UpcomingReminders(reminders: reminders),
+        _PastReminders(reminders: reminders),
       ],
     );
   }
@@ -210,13 +209,13 @@ class _RemindersScreenState extends ConsumerState<RemindersScreen>
 class _UpcomingReminders extends ConsumerWidget {
   const _UpcomingReminders({required this.reminders});
 
-  final List<Reminder> reminders;
+  final List<CachedReminder> reminders;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final now = DateTime.now();
     final upcoming =
-        reminders.where((r) => r.isActive && r.triggerAt.isAfter(now)).toList()
+        reminders.where((r) => !r.isSent && r.triggerAt.isAfter(now)).toList()
           ..sort((a, b) => a.triggerAt.compareTo(b.triggerAt));
 
     if (upcoming.isEmpty) {
@@ -252,15 +251,13 @@ class _UpcomingReminders extends ConsumerWidget {
 class _PastReminders extends ConsumerWidget {
   const _PastReminders({required this.reminders});
 
-  final List<Reminder> reminders;
+  final List<CachedReminder> reminders;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final now = DateTime.now();
     final past =
-        reminders
-            .where((r) => r.triggerAt.isBefore(now) || !r.isActive)
-            .toList()
+        reminders.where((r) => r.triggerAt.isBefore(now) || r.isSent).toList()
           ..sort((a, b) => b.triggerAt.compareTo(a.triggerAt));
 
     if (past.isEmpty) {
@@ -289,7 +286,7 @@ class _ReminderCard extends StatelessWidget {
     this.onSnooze,
   });
 
-  final Reminder reminder;
+  final CachedReminder reminder;
   final bool isPast;
   final VoidCallback? onSnooze;
 

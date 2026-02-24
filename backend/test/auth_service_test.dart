@@ -1,26 +1,48 @@
-// Mockito matchers (any, argThat, etc.) return null at compile time, which
-// is incompatible with non-nullable parameter types. This is a known
-// limitation of Mockito with Dart null safety.
-// ignore_for_file: argument_type_not_assignable
+import 'dart:convert';
+import 'dart:math';
+import 'dart:typed_data';
 
+import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:pointycastle/pointycastle.dart';
 import 'package:studio_pair_backend/src/config/app_config.dart';
 import 'package:studio_pair_backend/src/modules/auth/auth_repository.dart';
 import 'package:studio_pair_backend/src/modules/auth/auth_service.dart';
 import 'package:studio_pair_backend/src/services/notification_service.dart';
 import 'package:studio_pair_backend/src/utils/jwt_utils.dart';
 import 'package:studio_pair_backend/src/utils/password_utils.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 import 'package:test/test.dart';
 
-// --- Manual mocks ---
+import 'auth_service_test.mocks.dart';
 
-class MockAuthRepository extends Mock implements AuthRepository {}
-
-class MockJwtUtils extends Mock implements JwtUtils {}
-
-class MockNotificationService extends Mock implements NotificationService {}
-
+@GenerateNiceMocks([
+  MockSpec<AuthRepository>(),
+  MockSpec<JwtUtils>(),
+  MockSpec<NotificationService>(),
+])
 // --- Test helpers ---
+/// Generates a legacy PBKDF2 hash for testing backward compatibility.
+String _legacyPbkdf2Hash(String plaintext) {
+  const saltLength = 32;
+  const hashLength = 64;
+  const iterations = 100000;
+  const algorithm = 'PBKDF2';
+
+  final random = Random.secure();
+  final salt = Uint8List.fromList(
+    List.generate(saltLength, (_) => random.nextInt(256)),
+  );
+
+  final params = Pbkdf2Parameters(salt, iterations, hashLength);
+  final derivator = KeyDerivator('SHA-256/HMAC/PBKDF2')..init(params);
+  final hash = derivator.process(Uint8List.fromList(utf8.encode(plaintext)));
+
+  final saltBase64 = base64Encode(salt);
+  final hashBase64 = base64Encode(hash);
+
+  return '$algorithm:$iterations:$saltBase64:$hashBase64';
+}
 
 AppConfig _testConfig() {
   return const AppConfig(
@@ -79,7 +101,7 @@ void main() {
     });
 
     group('register', () {
-      test('throws AuthException for invalid email format', () async {
+      test('throws ValidationFailure for invalid email format', () async {
         expect(
           () => authService.register(
             email: 'not-an-email',
@@ -87,12 +109,16 @@ void main() {
             displayName: 'Alice',
           ),
           throwsA(
-            isA<AuthException>().having((e) => e.code, 'code', 'INVALID_EMAIL'),
+            isA<ValidationFailure>().having(
+              (e) => e.message,
+              'message',
+              'Invalid email format',
+            ),
           ),
         );
       });
 
-      test('throws AuthException for weak password', () async {
+      test('throws ValidationFailure for weak password', () async {
         expect(
           () => authService.register(
             email: 'alice@example.com',
@@ -100,12 +126,16 @@ void main() {
             displayName: 'Alice',
           ),
           throwsA(
-            isA<AuthException>().having((e) => e.code, 'code', 'WEAK_PASSWORD'),
+            isA<ValidationFailure>().having(
+              (e) => e.message,
+              'message',
+              contains('Password does not meet requirements'),
+            ),
           ),
         );
       });
 
-      test('throws AuthException for empty display name', () async {
+      test('throws ValidationFailure for empty display name', () async {
         expect(
           () => authService.register(
             email: 'alice@example.com',
@@ -113,17 +143,17 @@ void main() {
             displayName: '',
           ),
           throwsA(
-            isA<AuthException>().having(
-              (e) => e.code,
-              'code',
-              'INVALID_DISPLAY_NAME',
+            isA<ValidationFailure>().having(
+              (e) => e.message,
+              'message',
+              'Display name must be at least 2 characters',
             ),
           ),
         );
       });
 
       test(
-        'throws AuthException for display name shorter than 2 characters',
+        'throws ValidationFailure for display name shorter than 2 characters',
         () async {
           expect(
             () => authService.register(
@@ -132,17 +162,17 @@ void main() {
               displayName: 'A',
             ),
             throwsA(
-              isA<AuthException>().having(
-                (e) => e.code,
-                'code',
-                'INVALID_DISPLAY_NAME',
+              isA<ValidationFailure>().having(
+                (e) => e.message,
+                'message',
+                'Display name must be at least 2 characters',
               ),
             ),
           );
         },
       );
 
-      test('throws AuthException when email is already taken', () async {
+      test('throws ValidationFailure when email is already taken', () async {
         when(
           mockRepo.emailExists('alice@example.com'),
         ).thenAnswer((_) async => true);
@@ -154,7 +184,11 @@ void main() {
             displayName: 'Alice',
           ),
           throwsA(
-            isA<AuthException>().having((e) => e.code, 'code', 'EMAIL_TAKEN'),
+            isA<ValidationFailure>().having(
+              (e) => e.message,
+              'message',
+              'An account with this email already exists',
+            ),
           ),
         );
       });
@@ -166,10 +200,10 @@ void main() {
 
         when(
           mockRepo.createUser(
-            id: argThat(isA<String>(), named: 'id'),
-            email: argThat(isA<String>(), named: 'email'),
-            passwordHash: argThat(isA<String>(), named: 'passwordHash'),
-            displayName: argThat(isA<String>(), named: 'displayName'),
+            id: anyNamed('id'),
+            email: anyNamed('email'),
+            passwordHash: anyNamed('passwordHash'),
+            displayName: anyNamed('displayName'),
           ),
         ).thenAnswer(
           (_) async => {
@@ -180,23 +214,18 @@ void main() {
         );
 
         when(
-          mockJwt.generateAccessToken(
-            argThat(isA<String>()),
-            argThat(isA<String>()),
-          ),
+          mockJwt.generateAccessToken(any, any),
         ).thenReturn('access-token-123');
-        when(
-          mockJwt.generateRefreshToken(argThat(isA<String>())),
-        ).thenReturn('refresh-token-456');
+        when(mockJwt.generateRefreshToken(any)).thenReturn('refresh-token-456');
 
         when(
           mockRepo.createSession(
-            id: argThat(isA<String>(), named: 'id'),
-            userId: argThat(isA<String>(), named: 'userId'),
-            refreshTokenHash: argThat(isA<String>(), named: 'refreshTokenHash'),
-            ipAddress: argThat(isA<String>(), named: 'ipAddress'),
-            userAgent: argThat(isA<String>(), named: 'userAgent'),
-            expiresAt: argThat(isA<DateTime>(), named: 'expiresAt'),
+            id: anyNamed('id'),
+            userId: anyNamed('userId'),
+            refreshTokenHash: anyNamed('refreshTokenHash'),
+            ipAddress: anyNamed('ipAddress'),
+            userAgent: anyNamed('userAgent'),
+            expiresAt: anyNamed('expiresAt'),
           ),
         ).thenAnswer((_) async => {'id': 'session-1', 'user_id': 'user-1'});
 
@@ -211,10 +240,57 @@ void main() {
         expect(result, contains('user'));
         expect(result, contains('session'));
       });
+
+      test('registers new users with Argon2id hash', () async {
+        when(
+          mockRepo.emailExists('new@example.com'),
+        ).thenAnswer((_) async => false);
+
+        // Capture the password hash passed to createUser
+        String? capturedHash;
+        when(
+          mockRepo.createUser(
+            id: anyNamed('id'),
+            email: anyNamed('email'),
+            passwordHash: anyNamed('passwordHash'),
+            displayName: anyNamed('displayName'),
+          ),
+        ).thenAnswer((invocation) async {
+          capturedHash =
+              invocation.namedArguments[const Symbol('passwordHash')] as String;
+          return {
+            'id': 'user-new',
+            'email': 'new@example.com',
+            'display_name': 'New User',
+          };
+        });
+
+        when(mockJwt.generateAccessToken(any, any)).thenReturn('access-token');
+        when(mockJwt.generateRefreshToken(any)).thenReturn('refresh-token');
+        when(
+          mockRepo.createSession(
+            id: anyNamed('id'),
+            userId: anyNamed('userId'),
+            refreshTokenHash: anyNamed('refreshTokenHash'),
+            ipAddress: anyNamed('ipAddress'),
+            userAgent: anyNamed('userAgent'),
+            expiresAt: anyNamed('expiresAt'),
+          ),
+        ).thenAnswer((_) async => {'id': 'session-1', 'user_id': 'user-new'});
+
+        await authService.register(
+          email: 'new@example.com',
+          password: 'StrongP@ss1',
+          displayName: 'New User',
+        );
+
+        expect(capturedHash, isNotNull);
+        expect(capturedHash, startsWith('\$argon2id\$'));
+      });
     });
 
     group('login', () {
-      test('throws AuthException when user is not found', () async {
+      test('throws AuthFailure when user is not found', () async {
         when(
           mockRepo.findByEmail('unknown@example.com'),
         ).thenAnswer((_) async => null);
@@ -225,16 +301,16 @@ void main() {
             password: 'SomePassword1!',
           ),
           throwsA(
-            isA<AuthException>().having(
-              (e) => e.code,
-              'code',
-              'INVALID_CREDENTIALS',
+            isA<AuthFailure>().having(
+              (e) => e.message,
+              'message',
+              'Invalid email or password',
             ),
           ),
         );
       });
 
-      test('throws AuthException when account is deleted', () async {
+      test('throws AuthFailure when account is deleted', () async {
         when(mockRepo.findByEmail('deleted@example.com')).thenAnswer(
           (_) async => {
             'id': 'user-1',
@@ -250,16 +326,16 @@ void main() {
             password: 'Password1!',
           ),
           throwsA(
-            isA<AuthException>().having(
-              (e) => e.code,
-              'code',
-              'ACCOUNT_DELETED',
+            isA<AuthFailure>().having(
+              (e) => e.message,
+              'message',
+              'This account has been deleted',
             ),
           ),
         );
       });
 
-      test('throws AuthException when account is locked', () async {
+      test('throws AuthFailure when account is locked', () async {
         final futureTime = DateTime.now().toUtc().add(
           const Duration(minutes: 10),
         );
@@ -279,17 +355,17 @@ void main() {
             password: 'Password1!',
           ),
           throwsA(
-            isA<AuthException>().having(
-              (e) => e.code,
-              'code',
-              'ACCOUNT_LOCKED',
+            isA<AuthFailure>().having(
+              (e) => e.message,
+              'message',
+              contains('Account temporarily locked'),
             ),
           ),
         );
       });
 
       test(
-        'throws AuthException and increments failed attempts on wrong password',
+        'throws AuthFailure and increments failed attempts on wrong password',
         () async {
           final passwordHash = PasswordUtils.hashPassword('CorrectPass1!');
           when(mockRepo.findByEmail('user@example.com')).thenAnswer(
@@ -312,10 +388,10 @@ void main() {
               password: 'WrongPass1!',
             ),
             throwsA(
-              isA<AuthException>().having(
-                (e) => e.code,
-                'code',
-                'INVALID_CREDENTIALS',
+              isA<AuthFailure>().having(
+                (e) => e.message,
+                'message',
+                'Invalid email or password',
               ),
             ),
           );
@@ -349,12 +425,101 @@ void main() {
         expect(result['requires_2fa'], isTrue);
         expect(result['temp_token'], equals('temp-token-xyz'));
       });
+
+      test('does not rehash when login uses Argon2id hash', () async {
+        final argon2Hash = PasswordUtils.hashPassword('MyPassword1!');
+        when(mockRepo.findByEmail('argon2@example.com')).thenAnswer(
+          (_) async => {
+            'id': 'user-a2',
+            'email': 'argon2@example.com',
+            'password_hash': argon2Hash,
+            'deleted_at': null,
+            'locked_until': null,
+            'two_factor_enabled': false,
+          },
+        );
+        when(
+          mockRepo.resetFailedLoginAttempts('user-a2'),
+        ).thenAnswer((_) async {});
+        when(mockJwt.generateAccessToken(any, any)).thenReturn('access-token');
+        when(mockJwt.generateRefreshToken(any)).thenReturn('refresh-token');
+        when(
+          mockRepo.createSession(
+            id: anyNamed('id'),
+            userId: anyNamed('userId'),
+            refreshTokenHash: anyNamed('refreshTokenHash'),
+            ipAddress: anyNamed('ipAddress'),
+            userAgent: anyNamed('userAgent'),
+            expiresAt: anyNamed('expiresAt'),
+          ),
+        ).thenAnswer((_) async => {'id': 'session-1', 'user_id': 'user-a2'});
+
+        await authService.login(
+          email: 'argon2@example.com',
+          password: 'MyPassword1!',
+        );
+
+        // Should NOT call updatePassword since hash is already Argon2id
+        verifyNever(mockRepo.updatePassword(any, any));
+      });
+
+      test(
+        'transparently rehashes legacy PBKDF2 hash to Argon2id on login',
+        () async {
+          final legacyHash = _legacyPbkdf2Hash('LegacyPass1!');
+          when(mockRepo.findByEmail('legacy@example.com')).thenAnswer(
+            (_) async => {
+              'id': 'user-legacy',
+              'email': 'legacy@example.com',
+              'password_hash': legacyHash,
+              'deleted_at': null,
+              'locked_until': null,
+              'two_factor_enabled': false,
+            },
+          );
+          when(
+            mockRepo.resetFailedLoginAttempts('user-legacy'),
+          ).thenAnswer((_) async {});
+          when(mockRepo.updatePassword(any, any)).thenAnswer((_) async {});
+          when(
+            mockJwt.generateAccessToken(any, any),
+          ).thenReturn('access-token');
+          when(mockJwt.generateRefreshToken(any)).thenReturn('refresh-token');
+          when(
+            mockRepo.createSession(
+              id: anyNamed('id'),
+              userId: anyNamed('userId'),
+              refreshTokenHash: anyNamed('refreshTokenHash'),
+              ipAddress: anyNamed('ipAddress'),
+              userAgent: anyNamed('userAgent'),
+              expiresAt: anyNamed('expiresAt'),
+            ),
+          ).thenAnswer(
+            (_) async => {'id': 'session-1', 'user_id': 'user-legacy'},
+          );
+
+          final result = await authService.login(
+            email: 'legacy@example.com',
+            password: 'LegacyPass1!',
+          );
+
+          // Login should succeed
+          expect(result, containsPair('access_token', 'access-token'));
+
+          // Should call updatePassword with an Argon2id hash
+          final captured = verify(
+            mockRepo.updatePassword('user-legacy', captureAny),
+          ).captured;
+          expect(captured, hasLength(1));
+          expect(captured.first as String, startsWith('\$argon2id\$'));
+        },
+      );
     });
 
     group('logout', () {
       test('revokes session when found', () async {
         when(
-          mockRepo.findSessionByRefreshToken(argThat(isA<String>())),
+          mockRepo.findSessionByRefreshToken(any),
         ).thenAnswer((_) async => {'id': 'session-1', 'user_id': 'user-1'});
         when(
           mockRepo.revokeSession('session-1', 'user-1'),
@@ -367,17 +532,12 @@ void main() {
 
       test('does nothing when session is not found', () async {
         when(
-          mockRepo.findSessionByRefreshToken(argThat(isA<String>())),
+          mockRepo.findSessionByRefreshToken(any),
         ).thenAnswer((_) async => null);
 
         await authService.logout('user-1', 'non-existent-token');
 
-        verifyNever(
-          mockRepo.revokeSession(
-            argThat(isA<String>()),
-            argThat(isA<String>()),
-          ),
-        );
+        verifyNever(mockRepo.revokeSession(any, any));
       });
     });
 
@@ -404,17 +564,17 @@ void main() {
         );
         when(
           mockRepo.createPasswordResetToken(
-            userId: argThat(isA<String>(), named: 'userId'),
-            tokenHash: argThat(isA<String>(), named: 'tokenHash'),
-            expiresAt: argThat(isA<DateTime>(), named: 'expiresAt'),
+            userId: anyNamed('userId'),
+            tokenHash: anyNamed('tokenHash'),
+            expiresAt: anyNamed('expiresAt'),
           ),
         ).thenAnswer((_) async {});
         when(
           mockNotification.sendEmail(
-            to: argThat(isA<String>(), named: 'to'),
-            subject: argThat(isA<String>(), named: 'subject'),
-            htmlBody: argThat(isA<String>(), named: 'htmlBody'),
-            textBody: argThat(isA<String>(), named: 'textBody'),
+            to: anyNamed('to'),
+            subject: anyNamed('subject'),
+            htmlBody: anyNamed('htmlBody'),
+            textBody: anyNamed('textBody'),
           ),
         ).thenAnswer((_) async => true);
 
@@ -423,33 +583,44 @@ void main() {
         verify(
           mockRepo.createPasswordResetToken(
             userId: 'user-1',
-            tokenHash: argThat(isA<String>(), named: 'tokenHash'),
-            expiresAt: argThat(isA<DateTime>(), named: 'expiresAt'),
+            tokenHash: anyNamed('tokenHash'),
+            expiresAt: anyNamed('expiresAt'),
           ),
         ).called(1);
         verify(
           mockNotification.sendEmail(
             to: 'user@example.com',
-            subject: argThat(isA<String>(), named: 'subject'),
-            htmlBody: argThat(isA<String>(), named: 'htmlBody'),
-            textBody: argThat(isA<String>(), named: 'textBody'),
+            subject: anyNamed('subject'),
+            htmlBody: anyNamed('htmlBody'),
+            textBody: anyNamed('textBody'),
           ),
         ).called(1);
       });
     });
 
-    group('AuthException', () {
-      test('has correct default values', () {
-        const exception = AuthException('test error');
-        expect(exception.message, equals('test error'));
-        expect(exception.code, equals('AUTH_ERROR'));
-        expect(exception.statusCode, equals(400));
+    group('AppFailure', () {
+      test('AuthFailure has correct message', () {
+        const failure = AuthFailure('test error');
+        expect(failure.message, equals('test error'));
+        expect(failure, isA<AppFailure>());
       });
 
-      test('toString includes code and message', () {
-        const exception = AuthException('bad request', code: 'BAD');
-        expect(exception.toString(), contains('BAD'));
-        expect(exception.toString(), contains('bad request'));
+      test('ValidationFailure has correct message', () {
+        const failure = ValidationFailure('bad input');
+        expect(failure.message, equals('bad input'));
+        expect(failure, isA<AppFailure>());
+      });
+
+      test('NotFoundFailure has correct message', () {
+        const failure = NotFoundFailure('not found');
+        expect(failure.message, equals('not found'));
+        expect(failure, isA<AppFailure>());
+      });
+
+      test('toString includes type and message', () {
+        const failure = AuthFailure('bad request');
+        expect(failure.toString(), contains('AuthFailure'));
+        expect(failure.toString(), contains('bad request'));
       });
     });
   });

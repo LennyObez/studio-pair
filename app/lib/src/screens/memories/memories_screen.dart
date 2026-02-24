@@ -6,12 +6,14 @@ import 'package:intl/intl.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/memories_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Memories timeline screen with year/month grouping.
 class MemoriesScreen extends ConsumerStatefulWidget {
@@ -24,39 +26,25 @@ class MemoriesScreen extends ConsumerStatefulWidget {
 class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
   bool _showMilestonesOnly = false;
 
-  @override
-  void initState() {
-    super.initState();
-    _loadMemories();
-  }
-
-  void _loadMemories() {
-    final spaceId = ref.read(spaceProvider).currentSpace?.id;
-    if (spaceId != null) {
-      ref.read(memoriesProvider.notifier).loadMemories(spaceId);
-    }
-  }
-
   /// Group memories by year and month, returning a sorted structure.
-  Map<String, Map<String, List<Memory>>> _groupMemories(List<Memory> memories) {
-    final grouped = <String, Map<String, List<Memory>>>{};
+  Map<String, Map<String, List<CachedMemory>>> _groupMemories(
+    List<CachedMemory> memories,
+  ) {
+    final grouped = <String, Map<String, List<CachedMemory>>>{};
 
     for (final memory in memories) {
-      // date format is 'YYYY-MM-DD'
-      final parts = memory.date.split('-');
-      if (parts.length < 2) continue;
-      final year = parts[0];
-      final monthNum = int.tryParse(parts[1]) ?? 1;
+      final year = memory.memoryDate.year.toString();
+      final monthNum = memory.memoryDate.month;
       final monthName = _monthName(monthNum);
 
-      grouped.putIfAbsent(year, () => <String, List<Memory>>{});
-      grouped[year]!.putIfAbsent(monthName, () => <Memory>[]);
+      grouped.putIfAbsent(year, () => <String, List<CachedMemory>>{});
+      grouped[year]!.putIfAbsent(monthName, () => <CachedMemory>[]);
       grouped[year]![monthName]!.add(memory);
     }
 
     // Sort years descending
     final sortedYears = grouped.keys.toList()..sort((a, b) => b.compareTo(a));
-    final result = <String, Map<String, List<Memory>>>{};
+    final result = <String, Map<String, List<CachedMemory>>>{};
     for (final year in sortedYears) {
       result[year] = grouped[year]!;
     }
@@ -83,13 +71,9 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
     return months[month.clamp(1, 12)];
   }
 
-  String _formatDate(String dateStr) {
-    final parts = dateStr.split('-');
-    if (parts.length < 3) return dateStr;
-    final month = int.tryParse(parts[1]) ?? 1;
-    final day = int.tryParse(parts[2]) ?? 1;
-    final monthAbbr = _monthName(month).substring(0, 3);
-    return '$monthAbbr $day';
+  String _formatDate(DateTime date) {
+    final monthAbbr = _monthName(date.month).substring(0, 3);
+    return '$monthAbbr ${date.day}';
   }
 
   Future<void> _showAddMemoryDialog() async {
@@ -191,7 +175,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
         return;
       }
 
-      final spaceId = ref.read(spaceProvider).currentSpace?.id;
+      final spaceId = ref.read(spaceProvider).valueOrNull?.currentSpace?.id;
       if (spaceId == null) {
         titleController.dispose();
         descriptionController.dispose();
@@ -220,7 +204,10 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
           SnackBar(content: Text(context.l10n.translate('memoryAdded'))),
         );
       } else {
-        final error = ref.read(memoriesProvider).error;
+        final asyncState = ref.read(memoriesProvider);
+        final error = asyncState.error is AppFailure
+            ? (asyncState.error as AppFailure).message
+            : null;
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
             content: Text(error ?? context.l10n.translate('failedToAddMemory')),
@@ -233,7 +220,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
     descriptionController.dispose();
   }
 
-  void _showMemoryDetail(Memory memory) {
+  void _showMemoryDetail(CachedMemory memory) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
@@ -267,41 +254,25 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
                       ),
                     ),
                   ),
-                  // Cover photo or placeholder
-                  if (memory.coverPhotoUrl != null)
-                    ClipRRect(
+                  // Placeholder image area
+                  Container(
+                    height: 160,
+                    width: double.infinity,
+                    margin: const EdgeInsets.only(top: AppSpacing.sm),
+                    decoration: BoxDecoration(
+                      color: AppColors.moduleMemories.withValues(alpha: 0.1),
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(AppSpacing.radiusXl),
                       ),
-                      child: Image.network(
-                        memory.coverPhotoUrl!,
-                        height: 220,
-                        width: double.infinity,
-                        fit: BoxFit.cover,
-                        semanticLabel: 'Memory: ${memory.title}',
-                      ),
-                    )
-                  else
-                    Container(
-                      height: 160,
-                      width: double.infinity,
-                      margin: const EdgeInsets.only(top: AppSpacing.sm),
-                      decoration: BoxDecoration(
-                        color: AppColors.moduleMemories.withValues(alpha: 0.1),
-                        borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(AppSpacing.radiusXl),
-                        ),
-                      ),
-                      child: Center(
-                        child: Icon(
-                          memory.isMilestone ? Icons.emoji_events : Icons.photo,
-                          size: 64,
-                          color: AppColors.moduleMemories.withValues(
-                            alpha: 0.5,
-                          ),
-                        ),
+                    ),
+                    child: Center(
+                      child: Icon(
+                        memory.isMilestone ? Icons.emoji_events : Icons.photo,
+                        size: 64,
+                        color: AppColors.moduleMemories.withValues(alpha: 0.5),
                       ),
                     ),
+                  ),
                   Padding(
                     padding: const EdgeInsets.all(AppSpacing.lg),
                     child: Column(
@@ -341,8 +312,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
                                     ),
                                     const SizedBox(width: 4),
                                     Text(
-                                      memory.milestoneType ??
-                                          context.l10n.translate('milestone'),
+                                      context.l10n.translate('milestone'),
                                       style: theme.textTheme.labelSmall
                                           ?.copyWith(
                                             color: AppColors.warning,
@@ -364,59 +334,19 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
                             ),
                             const SizedBox(width: AppSpacing.xs),
                             Text(
-                              _formatDate(memory.date),
+                              _formatDate(memory.memoryDate),
                               style: theme.textTheme.bodyMedium?.copyWith(
                                 color: theme.colorScheme.onSurfaceVariant,
                               ),
                             ),
                           ],
                         ),
-                        if (memory.location != null) ...[
-                          const SizedBox(height: AppSpacing.xs),
-                          Row(
-                            children: [
-                              Icon(
-                                Icons.location_on,
-                                size: 16,
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                              const SizedBox(width: AppSpacing.xs),
-                              Expanded(
-                                child: Text(
-                                  memory.location!,
-                                  style: theme.textTheme.bodyMedium?.copyWith(
-                                    color: theme.colorScheme.onSurfaceVariant,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
                         if (memory.description != null &&
                             memory.description!.isNotEmpty) ...[
                           const SizedBox(height: AppSpacing.md),
                           Text(
                             memory.description!,
                             style: theme.textTheme.bodyMedium,
-                          ),
-                        ],
-                        if (memory.photoCount > 0) ...[
-                          const SizedBox(height: AppSpacing.md),
-                          Row(
-                            children: [
-                              const Icon(
-                                Icons.photo_library,
-                                size: 16,
-                                color: AppColors.moduleMemories,
-                              ),
-                              const SizedBox(width: AppSpacing.xs),
-                              Text(
-                                '${memory.photoCount} photo${memory.photoCount == 1 ? '' : 's'}',
-                                style: theme.textTheme.labelMedium?.copyWith(
-                                  color: AppColors.moduleMemories,
-                                ),
-                              ),
-                            ],
                           ),
                         ],
                         const SizedBox(height: AppSpacing.lg),
@@ -434,19 +364,20 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(memoriesProvider);
+    final asyncMemories = ref.watch(memoriesProvider);
     final theme = Theme.of(context);
+    final memories = ref.watch(memoryListProvider);
 
     return Scaffold(
       appBar: SpAppBar(
         title: context.l10n.translate('memories'),
         showBackButton: true,
         actions: [
-          if (state.memories.isNotEmpty)
+          if (memories.isNotEmpty)
             IconButton(
               icon: const Icon(Icons.slideshow),
               tooltip: context.l10n.translate('slideshow'),
-              onPressed: () => _openSlideshow(state.memories),
+              onPressed: () => _openSlideshow(memories),
             ),
           IconButton(
             icon: Icon(
@@ -462,7 +393,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
           ),
         ],
       ),
-      body: _buildBody(state, theme),
+      body: _buildBody(asyncMemories, memories, theme),
       floatingActionButton: FloatingActionButton(
         onPressed: _showAddMemoryDialog,
         tooltip: 'Add memory',
@@ -471,7 +402,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
     );
   }
 
-  void _openSlideshow(List<Memory> memories) {
+  void _openSlideshow(List<CachedMemory> memories) {
     Navigator.of(context).push(
       MaterialPageRoute(
         fullscreenDialog: true,
@@ -480,16 +411,25 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
     );
   }
 
-  Widget _buildBody(MemoriesState state, ThemeData theme) {
-    if (state.isLoading) {
+  Widget _buildBody(
+    AsyncValue<List<CachedMemory>> asyncMemories,
+    List<CachedMemory> memories,
+    ThemeData theme,
+  ) {
+    if (asyncMemories.isLoading && memories.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null) {
-      return SpErrorWidget(message: state.error!, onRetry: _loadMemories);
+    if (asyncMemories.hasError && memories.isEmpty) {
+      return SpErrorWidget(
+        message: asyncMemories.error is AppFailure
+            ? (asyncMemories.error as AppFailure).message
+            : '${asyncMemories.error}',
+        onRetry: () => ref.invalidate(memoriesProvider),
+      );
     }
 
-    if (state.memories.isEmpty) {
+    if (memories.isEmpty) {
       return SpEmptyState(
         icon: Icons.photo_library_outlined,
         title: context.l10n.translate('noMemoriesYet'),
@@ -498,8 +438,8 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
     }
 
     final filteredMemories = _showMilestonesOnly
-        ? state.memories.where((m) => m.isMilestone).toList()
-        : state.memories;
+        ? memories.where((m) => m.isMilestone).toList()
+        : memories;
 
     if (filteredMemories.isEmpty && _showMilestonesOnly) {
       return SpEmptyState(
@@ -541,7 +481,7 @@ class _MemoriesScreenState extends ConsumerState<MemoriesScreen> {
 class _MemoriesSlideshow extends StatefulWidget {
   const _MemoriesSlideshow({required this.memories});
 
-  final List<Memory> memories;
+  final List<CachedMemory> memories;
 
   @override
   State<_MemoriesSlideshow> createState() => _MemoriesSlideshowState();
@@ -604,6 +544,10 @@ class _MemoriesSlideshowState extends State<_MemoriesSlideshow>
         _autoAdvanceTimer?.cancel();
       }
     });
+  }
+
+  String _formatDate(DateTime date) {
+    return DateFormat('MMM d, yyyy').format(date);
   }
 
   @override
@@ -669,7 +613,7 @@ class _MemoriesSlideshowState extends State<_MemoriesSlideshow>
                 ),
                 const SizedBox(height: AppSpacing.xs),
                 Text(
-                  widget.memories[_currentPage].date,
+                  _formatDate(widget.memories[_currentPage].memoryDate),
                   style: theme.textTheme.bodyMedium?.copyWith(
                     color: Colors.white70,
                   ),
@@ -746,7 +690,7 @@ class _MemoriesSlideshowState extends State<_MemoriesSlideshow>
 class _KenBurnsSlide extends StatelessWidget {
   const _KenBurnsSlide({required this.memory, required this.animation});
 
-  final Memory memory;
+  final CachedMemory memory;
   final Animation<double> animation;
 
   @override
@@ -769,24 +713,16 @@ class _KenBurnsSlide extends StatelessWidget {
           child: child,
         );
       },
-      child: memory.coverPhotoUrl != null
-          ? Image.network(
-              memory.coverPhotoUrl!,
-              fit: BoxFit.cover,
-              width: double.infinity,
-              height: double.infinity,
-              semanticLabel: 'Memory: ${memory.title}',
-            )
-          : Container(
-              color: AppColors.moduleMemories.withValues(alpha: 0.2),
-              child: Center(
-                child: Icon(
-                  memory.isMilestone ? Icons.emoji_events : Icons.photo,
-                  size: 80,
-                  color: AppColors.moduleMemories.withValues(alpha: 0.5),
-                ),
-              ),
-            ),
+      child: Container(
+        color: AppColors.moduleMemories.withValues(alpha: 0.2),
+        child: Center(
+          child: Icon(
+            memory.isMilestone ? Icons.emoji_events : Icons.photo,
+            size: 80,
+            color: AppColors.moduleMemories.withValues(alpha: 0.5),
+          ),
+        ),
+      ),
     );
   }
 }
@@ -802,9 +738,9 @@ class _MonthSection extends StatelessWidget {
 
   final String month;
   final ThemeData theme;
-  final List<Memory> memories;
-  final String Function(String) formatDate;
-  final void Function(Memory) onMemoryTap;
+  final List<CachedMemory> memories;
+  final String Function(DateTime) formatDate;
+  final void Function(CachedMemory) onMemoryTap;
 
   @override
   Widget build(BuildContext context) {
@@ -829,7 +765,7 @@ class _MonthSection extends StatelessWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // Cover photo or placeholder
+                  // Placeholder image area
                   Container(
                     height: 160,
                     width: double.infinity,
@@ -838,26 +774,14 @@ class _MonthSection extends StatelessWidget {
                       borderRadius: const BorderRadius.vertical(
                         top: Radius.circular(AppSpacing.radiusLg),
                       ),
-                      image: memory.coverPhotoUrl != null
-                          ? DecorationImage(
-                              image: NetworkImage(memory.coverPhotoUrl!),
-                              fit: BoxFit.cover,
-                            )
-                          : null,
                     ),
-                    child: memory.coverPhotoUrl == null
-                        ? Center(
-                            child: Icon(
-                              memory.isMilestone
-                                  ? Icons.emoji_events
-                                  : Icons.photo,
-                              size: 48,
-                              color: AppColors.moduleMemories.withValues(
-                                alpha: 0.5,
-                              ),
-                            ),
-                          )
-                        : null,
+                    child: Center(
+                      child: Icon(
+                        memory.isMilestone ? Icons.emoji_events : Icons.photo,
+                        size: 48,
+                        color: AppColors.moduleMemories.withValues(alpha: 0.5),
+                      ),
+                    ),
                   ),
                   Padding(
                     padding: const EdgeInsets.all(AppSpacing.md),
@@ -885,7 +809,7 @@ class _MonthSection extends StatelessWidget {
                         ),
                         const SizedBox(height: 4),
                         Text(
-                          formatDate(memory.date),
+                          formatDate(memory.memoryDate),
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),

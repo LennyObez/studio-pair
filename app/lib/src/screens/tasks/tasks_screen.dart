@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
 import 'package:studio_pair/src/providers/tasks_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
@@ -38,27 +38,17 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
   };
 
   @override
-  void initState() {
-    super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        ref.read(tasksProvider.notifier).loadTasks(spaceId);
-      }
-    });
-  }
-
-  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final state = ref.watch(tasksProvider);
+    final asyncTasks = ref.watch(tasksProvider);
     final filteredTasks = ref.watch(taskListProvider);
     final spaceId = ref.watch(currentSpaceProvider)?.id;
+    final currentFilter = ref.watch(taskStatusFilter);
 
     // Map the provider filter back to display label
     final selectedFilter = _filterToStatus.entries
         .firstWhere(
-          (e) => e.value == state.filter,
+          (e) => e.value == currentFilter,
           orElse: () => const MapEntry('All', 'all'),
         )
         .key;
@@ -88,9 +78,8 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
                         ),
                       ),
                       onSelected: (_) {
-                        ref
-                            .read(tasksProvider.notifier)
-                            .setFilter(_filterToStatus[filter] ?? 'all');
+                        ref.read(taskStatusFilter.notifier).state =
+                            _filterToStatus[filter] ?? 'all';
                       },
                     ),
                   ),
@@ -103,7 +92,7 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
           Expanded(
             child: _buildBody(
               theme: theme,
-              state: state,
+              asyncTasks: asyncTasks,
               filteredTasks: filteredTasks,
               spaceId: spaceId,
             ),
@@ -122,22 +111,19 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
 
   Widget _buildBody({
     required ThemeData theme,
-    required TasksState state,
-    required List<TaskItem> filteredTasks,
+    required AsyncValue<List<CachedTask>> asyncTasks,
+    required List<CachedTask> filteredTasks,
     required String? spaceId,
   }) {
-    if (state.isLoading && state.tasks.isEmpty) {
+    if (asyncTasks.isLoading && (asyncTasks.valueOrNull?.isEmpty ?? true)) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.tasks.isEmpty) {
+    if (asyncTasks.hasError && (asyncTasks.valueOrNull?.isEmpty ?? true)) {
       return SpErrorWidget(
-        message: state.error!,
-        onRetry: () {
-          if (spaceId != null) {
-            ref.read(tasksProvider.notifier).loadTasks(spaceId);
-          }
-        },
+        message: asyncTasks.error.toString(),
+        failure: asyncTasks.error,
+        onRetry: () => ref.invalidate(tasksProvider),
       );
     }
 
@@ -153,9 +139,7 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
 
     return RefreshIndicator(
       onRefresh: () async {
-        if (spaceId != null) {
-          await ref.read(tasksProvider.notifier).loadTasks(spaceId);
-        }
+        ref.invalidate(tasksProvider);
       },
       child: ListView.builder(
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
@@ -256,7 +240,7 @@ class _TasksScreenState extends ConsumerState<TasksScreen> {
 class _TaskCard extends StatelessWidget {
   const _TaskCard({required this.task, required this.onToggle});
 
-  final TaskItem task;
+  final CachedTask task;
   final VoidCallback onToggle;
 
   Color get _priorityColor {
@@ -309,29 +293,19 @@ class _TaskCard extends StatelessWidget {
             color: isDone ? theme.colorScheme.onSurfaceVariant : null,
           ),
         ),
-        subtitle: Row(
-          children: [
-            if (task.assignees.isNotEmpty) ...[
-              Icon(
-                Icons.person_outline,
-                size: 14,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(task.assignees.first, style: theme.textTheme.labelSmall),
-              const SizedBox(width: AppSpacing.sm),
-            ],
-            if (task.dueDate != null) ...[
-              Icon(
-                Icons.calendar_today,
-                size: 14,
-                color: theme.colorScheme.onSurfaceVariant,
-              ),
-              const SizedBox(width: 4),
-              Text(_dueDateLabel, style: theme.textTheme.labelSmall),
-            ],
-          ],
-        ),
+        subtitle: task.dueDate != null
+            ? Row(
+                children: [
+                  Icon(
+                    Icons.calendar_today,
+                    size: 14,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(_dueDateLabel, style: theme.textTheme.labelSmall),
+                ],
+              )
+            : null,
         trailing: Semantics(
           label: '${task.priority} priority',
           child: Container(

@@ -1,5 +1,4 @@
-// ignore_for_file: argument_type_not_assignable
-
+import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:studio_pair_backend/src/modules/calendar/calendar_repository.dart';
 import 'package:studio_pair_backend/src/modules/calendar/calendar_service.dart';
@@ -7,14 +6,13 @@ import 'package:studio_pair_backend/src/modules/spaces/spaces_repository.dart';
 import 'package:studio_pair_backend/src/services/notification_service.dart';
 import 'package:test/test.dart';
 
-// --- Manual mocks ---
+import 'calendar_service_test.mocks.dart';
 
-class MockCalendarRepository extends Mock implements CalendarRepository {}
-
-class MockSpacesRepository extends Mock implements SpacesRepository {}
-
-class MockNotificationService extends Mock implements NotificationService {}
-
+@GenerateNiceMocks([
+  MockSpec<CalendarRepository>(),
+  MockSpec<SpacesRepository>(),
+  MockSpec<NotificationService>(),
+])
 void main() {
   group('CalendarService', () {
     late MockCalendarRepository mockCalendarRepo;
@@ -184,15 +182,15 @@ void main() {
 
         when(
           mockCalendarRepo.createEvent(
-            id: argThat(isA<String>(), named: 'id'),
-            spaceId: argThat(isA<String>(), named: 'spaceId'),
-            createdBy: argThat(isA<String>(), named: 'createdBy'),
-            title: argThat(isA<String>(), named: 'title'),
+            id: anyNamed('id'),
+            spaceId: anyNamed('spaceId'),
+            createdBy: anyNamed('createdBy'),
+            title: anyNamed('title'),
             location: anyNamed('location'),
-            eventType: argThat(isA<String>(), named: 'eventType'),
-            allDay: argThat(isA<bool>(), named: 'allDay'),
-            startAt: argThat(isA<DateTime>(), named: 'startAt'),
-            endAt: argThat(isA<DateTime>(), named: 'endAt'),
+            eventType: anyNamed('eventType'),
+            allDay: anyNamed('allDay'),
+            startAt: anyNamed('startAt'),
+            endAt: anyNamed('endAt'),
             recurrenceRule: anyNamed('recurrenceRule'),
             sourceModule: anyNamed('sourceModule'),
             sourceEntityId: anyNamed('sourceEntityId'),
@@ -331,12 +329,7 @@ void main() {
             'end_at': now.add(const Duration(hours: 1)).toIso8601String(),
           },
         );
-        when(
-          mockCalendarRepo.updateEvent(
-            'event-1',
-            argThat(isA<Map<String, dynamic>>()),
-          ),
-        ).thenAnswer(
+        when(mockCalendarRepo.updateEvent(any, any)).thenAnswer(
           (_) async => {
             'id': 'event-1',
             'space_id': 'space-1',

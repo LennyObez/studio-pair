@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/cards_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
@@ -26,7 +27,6 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
   void initState() {
     super.initState();
     _pageController = PageController(viewportFraction: 0.85);
-    ref.read(cardsProvider.notifier).loadCards();
   }
 
   @override
@@ -45,13 +45,6 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
     }
   }
 
-  String _formatExpiry(int? month, int? year) {
-    if (month == null || year == null) return '';
-    final m = month.toString().padLeft(2, '0');
-    final y = (year % 100).toString().padLeft(2, '0');
-    return '$m/$y';
-  }
-
   void _copyToClipboard(BuildContext context, String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
     ScaffoldMessenger.of(
@@ -59,9 +52,9 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
     ).showSnackBar(SnackBar(content: Text('$label copied to clipboard')));
   }
 
-  void _showCardDetailSheet(BuildContext context, CardItem card) {
+  void _showCardDetailSheet(BuildContext context, CachedCard card) {
     final theme = Theme.of(context);
-    final isLoyalty = card.cardType == 'loyalty';
+    final isLoyalty = card.type == 'loyalty';
 
     showModalBottomSheet(
       context: context,
@@ -87,15 +80,15 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
               ),
               Text(
                 isLoyalty
-                    ? (card.loyaltyStoreName ?? card.displayName)
-                    : '${card.provider ?? card.cardType.toUpperCase()} Card',
+                    ? (card.storeName ?? card.holderName)
+                    : '${card.provider ?? card.type.toUpperCase()} Card',
                 style: theme.textTheme.titleLarge?.copyWith(
                   fontWeight: FontWeight.bold,
                 ),
               ),
               const SizedBox(height: AppSpacing.sm),
               Chip(
-                label: Text(card.cardType.toUpperCase()),
+                label: Text(card.type.toUpperCase()),
                 avatar: Icon(
                   isLoyalty ? Icons.loyalty : Icons.credit_card,
                   size: 16,
@@ -110,9 +103,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                       ListTile(
                         leading: const Icon(Icons.store),
                         title: Text(context.l10n.translate('store')),
-                        subtitle: Text(
-                          card.loyaltyStoreName ?? card.displayName,
-                        ),
+                        subtitle: Text(card.storeName ?? card.holderName),
                       ),
                       const Divider(height: 1),
                       ListTile(
@@ -138,18 +129,18 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                         leading: const Icon(Icons.credit_card),
                         title: Text(context.l10n.translate('cardNumber')),
                         subtitle: Text(
-                          card.lastFour != null
-                              ? '**** **** **** ${card.lastFour}'
+                          card.lastFourDigits != null
+                              ? '**** **** **** ${card.lastFourDigits}'
                               : 'N/A',
                         ),
-                        trailing: card.lastFour != null
+                        trailing: card.lastFourDigits != null
                             ? IconButton(
                                 icon: const Icon(Icons.copy),
                                 tooltip: 'Copy last 4 digits',
                                 onPressed: () {
                                   _copyToClipboard(
                                     context,
-                                    card.lastFour!,
+                                    card.lastFourDigits!,
                                     'Last 4 digits',
                                   );
                                 },
@@ -160,14 +151,14 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                       ListTile(
                         leading: const Icon(Icons.person),
                         title: Text(context.l10n.translate('cardholder')),
-                        subtitle: Text(card.displayName),
+                        subtitle: Text(card.holderName),
                         trailing: IconButton(
                           icon: const Icon(Icons.copy),
                           tooltip: 'Copy cardholder name',
                           onPressed: () {
                             _copyToClipboard(
                               context,
-                              card.displayName,
+                              card.holderName,
                               'Cardholder name',
                             );
                           },
@@ -177,9 +168,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                       ListTile(
                         leading: const Icon(Icons.calendar_today),
                         title: Text(context.l10n.translate('expiryDate')),
-                        subtitle: Text(
-                          _formatExpiry(card.expiryMonth, card.expiryYear),
-                        ),
+                        subtitle: Text(card.expiryDate ?? ''),
                       ),
                       if (card.provider != null) ...[
                         const Divider(height: 1),
@@ -207,7 +196,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                         builder: (dCtx) => AlertDialog(
                           title: Text(context.l10n.translate('delete')),
                           content: Text(
-                            'Are you sure you want to delete "${card.displayName}"?',
+                            'Are you sure you want to delete "${card.holderName}"?',
                           ),
                           actions: [
                             TextButton(
@@ -246,7 +235,9 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                         final error = ref.read(cardsProvider).error;
                         messenger.showSnackBar(
                           SnackBar(
-                            content: Text(error ?? 'Failed to delete card'),
+                            content: Text(
+                              error?.toString() ?? 'Failed to delete card',
+                            ),
                           ),
                         );
                       }
@@ -269,7 +260,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(cardsProvider);
+    final asyncCards = ref.watch(cardsProvider);
     final theme = Theme.of(context);
 
     return Scaffold(
@@ -281,7 +272,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
             icon: const Icon(Icons.filter_list),
             tooltip: 'Filter by card type',
             onSelected: (type) {
-              ref.read(cardsProvider.notifier).setTypeFilter(type);
+              ref.read(cardTypeFilter.notifier).state = type;
             },
             itemBuilder: (context) => [
               PopupMenuItem(child: Text(context.l10n.translate('all'))),
@@ -301,7 +292,7 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
           ),
         ],
       ),
-      body: _buildBody(state, theme),
+      body: _buildBody(asyncCards, theme),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showAddCardDialog(context),
         tooltip: 'Add card',
@@ -577,15 +568,16 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
     );
   }
 
-  Widget _buildBody(CardsState state, ThemeData theme) {
-    if (state.isLoading && state.cards.isEmpty) {
+  Widget _buildBody(AsyncValue<List<CachedCard>> asyncCards, ThemeData theme) {
+    if (asyncCards.isLoading && (asyncCards.valueOrNull?.isEmpty ?? true)) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null) {
+    if (asyncCards.hasError && (asyncCards.valueOrNull?.isEmpty ?? true)) {
       return SpErrorWidget(
-        message: state.error!,
-        onRetry: () => ref.read(cardsProvider.notifier).loadCards(),
+        message: asyncCards.error.toString(),
+        failure: asyncCards.error,
+        onRetry: () => ref.invalidate(cardsProvider),
       );
     }
 
@@ -626,8 +618,9 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                 child: _CreditCardWidget(
                   card: card,
                   theme: theme,
-                  cardColor: _parseCardColor(card.cardColor),
-                  formatExpiry: _formatExpiry,
+                  cardColor: _parseCardColor(
+                    null,
+                  ), // CachedCard has no cardColor
                 ),
               );
             },
@@ -653,13 +646,12 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                 Card(
                   child: Column(
                     children: [
-                      if (selectedCard.cardType == 'loyalty') ...[
+                      if (selectedCard.type == 'loyalty') ...[
                         ListTile(
                           leading: const Icon(Icons.loyalty),
                           title: Text(context.l10n.translate('store')),
                           subtitle: Text(
-                            selectedCard.loyaltyStoreName ??
-                                selectedCard.displayName,
+                            selectedCard.storeName ?? selectedCard.holderName,
                           ),
                         ),
                         const Divider(height: 1),
@@ -686,18 +678,18 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                           leading: const Icon(Icons.credit_card),
                           title: Text(context.l10n.translate('cardNumber')),
                           subtitle: Text(
-                            selectedCard.lastFour != null
-                                ? '**** **** **** ${selectedCard.lastFour}'
+                            selectedCard.lastFourDigits != null
+                                ? '**** **** **** ${selectedCard.lastFourDigits}'
                                 : 'N/A',
                           ),
-                          trailing: selectedCard.lastFour != null
+                          trailing: selectedCard.lastFourDigits != null
                               ? IconButton(
                                   icon: const Icon(Icons.copy),
                                   tooltip: 'Copy card number',
                                   onPressed: () {
                                     _copyToClipboard(
                                       context,
-                                      selectedCard.lastFour!,
+                                      selectedCard.lastFourDigits!,
                                       'Last 4 digits',
                                     );
                                   },
@@ -708,18 +700,13 @@ class _CardsScreenState extends ConsumerState<CardsScreen> {
                         ListTile(
                           leading: const Icon(Icons.person),
                           title: Text(context.l10n.translate('cardholder')),
-                          subtitle: Text(selectedCard.displayName),
+                          subtitle: Text(selectedCard.holderName),
                         ),
                         const Divider(height: 1),
                         ListTile(
                           leading: const Icon(Icons.calendar_today),
                           title: Text(context.l10n.translate('expiryDate')),
-                          subtitle: Text(
-                            _formatExpiry(
-                              selectedCard.expiryMonth,
-                              selectedCard.expiryYear,
-                            ),
-                          ),
+                          subtitle: Text(selectedCard.expiryDate ?? ''),
                         ),
                       ],
                     ],
@@ -739,22 +726,20 @@ class _CreditCardWidget extends StatelessWidget {
     required this.card,
     required this.theme,
     required this.cardColor,
-    required this.formatExpiry,
   });
 
-  final CardItem card;
+  final CachedCard card;
   final ThemeData theme;
   final Color cardColor;
-  final String Function(int?, int?) formatExpiry;
 
   @override
   Widget build(BuildContext context) {
-    final isLoyalty = card.cardType == 'loyalty';
+    final isLoyalty = card.type == 'loyalty';
 
     return Semantics(
       label: isLoyalty
-          ? '${card.loyaltyStoreName ?? card.displayName} loyalty card'
-          : '${card.provider ?? card.cardType} card ending in ${card.lastFour ?? "unknown"}',
+          ? '${card.storeName ?? card.holderName} loyalty card'
+          : '${card.provider ?? card.type} card ending in ${card.lastFourDigits ?? "unknown"}',
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm),
         child: Container(
@@ -783,8 +768,8 @@ class _CreditCardWidget extends StatelessWidget {
                 children: [
                   Text(
                     isLoyalty
-                        ? (card.loyaltyStoreName ?? card.displayName)
-                        : (card.provider ?? card.cardType.toUpperCase()),
+                        ? (card.storeName ?? card.holderName)
+                        : (card.provider ?? card.type.toUpperCase()),
                     style: theme.textTheme.titleMedium?.copyWith(
                       color: Colors.white,
                       fontWeight: FontWeight.bold,
@@ -808,7 +793,7 @@ class _CreditCardWidget extends StatelessWidget {
               Text(
                 isLoyalty
                     ? (card.loyaltyNumber ?? '')
-                    : '**** **** **** ${card.lastFour ?? '----'}',
+                    : '**** **** **** ${card.lastFourDigits ?? '----'}',
                 style: theme.textTheme.titleLarge?.copyWith(
                   color: Colors.white,
                   letterSpacing: 2,
@@ -828,7 +813,7 @@ class _CreditCardWidget extends StatelessWidget {
                         ),
                       ),
                       Text(
-                        card.displayName,
+                        card.holderName,
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: Colors.white,
                         ),
@@ -847,7 +832,7 @@ class _CreditCardWidget extends StatelessWidget {
                           ),
                         ),
                         Text(
-                          formatExpiry(card.expiryMonth, card.expiryYear),
+                          card.expiryDate ?? '',
                           style: theme.textTheme.bodyMedium?.copyWith(
                             color: Colors.white,
                           ),

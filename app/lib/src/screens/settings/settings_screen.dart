@@ -27,7 +27,7 @@ class SettingsScreen extends ConsumerWidget {
     final currentUser = ref.watch(currentUserProvider);
     final themeMode = ref.watch(themeModeProvider);
     final locale = ref.watch(localeProvider);
-    final syncState = ref.watch(syncProvider);
+    final syncState = ref.watch(syncProvider).valueOrNull;
     final l10n = context.l10n;
 
     return Scaffold(
@@ -68,7 +68,9 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.workspace_premium,
                 title: l10n.translate('subscription'),
-                subtitle: ref.watch(purchaseProvider).isPremium
+                subtitle:
+                    (ref.watch(purchaseProvider).valueOrNull?.isPremium ??
+                        false)
                     ? l10n.translate('premium')
                     : l10n.translate('freePlan'),
                 onTap: () => context.go('/settings/premium'),
@@ -226,7 +228,9 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.storage_outlined,
                 title: l10n.translate('storageUsage'),
-                subtitle: ref.watch(purchaseProvider).isPremium
+                subtitle:
+                    (ref.watch(purchaseProvider).valueOrNull?.isPremium ??
+                        false)
                     ? 'Premium: 1 GB available'
                     : 'Free plan: 10 MB available',
                 onTap: () {
@@ -245,7 +249,11 @@ class SettingsScreen extends ConsumerWidget {
                           ),
                           const SizedBox(height: AppSpacing.sm),
                           Text(
-                            ref.read(purchaseProvider).isPremium
+                            (ref
+                                        .read(purchaseProvider)
+                                        .valueOrNull
+                                        ?.isPremium ??
+                                    false)
                                 ? '24 MB of 1 GB used'
                                 : '2.4 MB of 10 MB used',
                           ),
@@ -309,7 +317,7 @@ class SettingsScreen extends ConsumerWidget {
               _SettingsTile(
                 icon: Icons.sync,
                 title: l10n.translate('sync'),
-                subtitle: syncState.statusText,
+                subtitle: syncState?.statusText ?? 'Initializing...',
                 onTap: () {
                   ref.read(syncProvider.notifier).forceSync();
                 },

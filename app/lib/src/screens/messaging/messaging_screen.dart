@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
@@ -11,6 +10,7 @@ import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Messaging screen with Chat and Mail tabs.
 class MessagingScreen extends ConsumerStatefulWidget {
@@ -28,13 +28,6 @@ class _MessagingScreenState extends ConsumerState<MessagingScreen>
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
-
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        ref.read(messagingProvider.notifier).loadConversations(spaceId);
-      }
-    });
   }
 
   @override
@@ -108,8 +101,13 @@ class _MessagingScreenState extends ConsumerState<MessagingScreen>
                   participantIds.insert(0, currentUserId);
                 }
                 ref
-                    .read(messagingProvider.notifier)
-                    .createConversation(spaceId, title, 'chat', participantIds);
+                    .read(conversationsProvider.notifier)
+                    .createConversation(
+                      spaceId,
+                      title: title,
+                      type: 'chat',
+                      participantIds: participantIds,
+                    );
                 Navigator.of(ctx).pop();
               }
             },
@@ -129,7 +127,7 @@ class _ChatList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final state = ref.watch(messagingProvider);
+    final asyncConversations = ref.watch(conversationsProvider);
     final conversations = ref.watch(conversationListProvider);
 
     // Filter to chat-type conversations
@@ -137,17 +135,17 @@ class _ChatList extends ConsumerWidget {
         .where((c) => c.type == 'chat')
         .toList();
 
-    if (state.isLoading && conversations.isEmpty) {
+    if (asyncConversations.isLoading && conversations.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && conversations.isEmpty) {
+    if (asyncConversations.hasError && conversations.isEmpty) {
       return SpErrorWidget(
-        message: state.error!,
+        message: asyncConversations.error is AppFailure
+            ? (asyncConversations.error as AppFailure).message
+            : '${asyncConversations.error}',
         onRetry: () {
-          if (spaceId != null) {
-            ref.read(messagingProvider.notifier).loadConversations(spaceId!);
-          }
+          ref.invalidate(conversationsProvider);
         },
       );
     }
@@ -166,6 +164,7 @@ class _ChatList extends ConsumerWidget {
       separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
       itemBuilder: (context, index) {
         final convo = chatConversations[index];
+        final title = convo.title ?? '';
         return ListTile(
           contentPadding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.md,
@@ -173,19 +172,15 @@ class _ChatList extends ConsumerWidget {
           ),
           leading: CircleAvatar(
             radius: 24,
-            child: Text(
-              convo.title.isNotEmpty ? convo.title[0].toUpperCase() : '?',
-            ),
+            child: Text(title.isNotEmpty ? title[0].toUpperCase() : '?'),
           ),
           title: Row(
             children: [
               Expanded(
                 child: Text(
-                  convo.title,
+                  title,
                   style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: convo.unreadCount > 0
-                        ? FontWeight.bold
-                        : FontWeight.w500,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ),
@@ -193,9 +188,7 @@ class _ChatList extends ConsumerWidget {
                 Text(
                   _timeAgo(convo.lastMessageAt!),
                   style: theme.textTheme.labelSmall?.copyWith(
-                    color: convo.unreadCount > 0
-                        ? theme.colorScheme.primary
-                        : theme.colorScheme.onSurfaceVariant,
+                    color: theme.colorScheme.onSurfaceVariant,
                   ),
                 ),
             ],
@@ -204,39 +197,18 @@ class _ChatList extends ConsumerWidget {
             children: [
               Expanded(
                 child: Text(
-                  convo.lastMessage ?? '',
+                  convo.lastMessagePreview ?? '',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurfaceVariant,
-                    fontWeight: convo.unreadCount > 0
-                        ? FontWeight.w500
-                        : FontWeight.normal,
                   ),
                 ),
               ),
-              if (convo.unreadCount > 0)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${convo.unreadCount}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onPrimary,
-                      fontSize: 10,
-                    ),
-                  ),
-                ),
             ],
           ),
           onTap: () {
-            ref.read(messagingProvider.notifier).selectConversation(convo.id);
+            ref.read(currentConversationIdProvider.notifier).state = convo.id;
             context.go('/messages/${convo.id}');
           },
         );
@@ -262,7 +234,7 @@ class _MailList extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final state = ref.watch(messagingProvider);
+    final asyncConversations = ref.watch(conversationsProvider);
     final conversations = ref.watch(conversationListProvider);
 
     // Filter to mail-type conversations
@@ -270,17 +242,17 @@ class _MailList extends ConsumerWidget {
         .where((c) => c.type == 'mail')
         .toList();
 
-    if (state.isLoading && conversations.isEmpty) {
+    if (asyncConversations.isLoading && conversations.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && conversations.isEmpty) {
+    if (asyncConversations.hasError && conversations.isEmpty) {
       return SpErrorWidget(
-        message: state.error!,
+        message: asyncConversations.error is AppFailure
+            ? (asyncConversations.error as AppFailure).message
+            : '${asyncConversations.error}',
         onRetry: () {
-          if (spaceId != null) {
-            ref.read(messagingProvider.notifier).loadConversations(spaceId!);
-          }
+          ref.invalidate(conversationsProvider);
         },
       );
     }
@@ -299,6 +271,7 @@ class _MailList extends ConsumerWidget {
       separatorBuilder: (_, __) => const Divider(height: 1, indent: 72),
       itemBuilder: (context, index) {
         final convo = mailConversations[index];
+        final title = convo.title ?? '';
         return ListTile(
           contentPadding: const EdgeInsets.symmetric(
             horizontal: AppSpacing.md,
@@ -306,47 +279,24 @@ class _MailList extends ConsumerWidget {
           ),
           leading: CircleAvatar(
             radius: 24,
-            child: Text(
-              convo.title.isNotEmpty ? convo.title[0].toUpperCase() : '?',
-            ),
+            child: Text(title.isNotEmpty ? title[0].toUpperCase() : '?'),
           ),
           title: Text(
-            convo.title,
+            title,
             style: theme.textTheme.titleSmall?.copyWith(
-              fontWeight: convo.unreadCount > 0
-                  ? FontWeight.bold
-                  : FontWeight.w500,
+              fontWeight: FontWeight.w500,
             ),
           ),
           subtitle: Text(
-            convo.lastMessage ?? '',
+            convo.lastMessagePreview ?? '',
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
             style: theme.textTheme.bodySmall?.copyWith(
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          trailing: convo.unreadCount > 0
-              ? Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  decoration: BoxDecoration(
-                    color: theme.colorScheme.primary,
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Text(
-                    '${convo.unreadCount}',
-                    style: theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.onPrimary,
-                      fontSize: 10,
-                    ),
-                  ),
-                )
-              : null,
           onTap: () {
-            ref.read(messagingProvider.notifier).selectConversation(convo.id);
+            ref.read(currentConversationIdProvider.notifier).state = convo.id;
             context.go('/messages/${convo.id}');
           },
         );

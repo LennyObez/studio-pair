@@ -1,5 +1,4 @@
-// ignore_for_file: argument_type_not_assignable
-
+import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:studio_pair_backend/src/modules/calendar/calendar_service.dart';
 import 'package:studio_pair_backend/src/modules/spaces/spaces_repository.dart';
@@ -8,16 +7,14 @@ import 'package:studio_pair_backend/src/modules/tasks/tasks_service.dart';
 import 'package:studio_pair_backend/src/services/notification_service.dart';
 import 'package:test/test.dart';
 
-// --- Manual mocks ---
+import 'tasks_service_test.mocks.dart';
 
-class MockTasksRepository extends Mock implements TasksRepository {}
-
-class MockSpacesRepository extends Mock implements SpacesRepository {}
-
-class MockNotificationService extends Mock implements NotificationService {}
-
-class MockCalendarService extends Mock implements CalendarService {}
-
+@GenerateNiceMocks([
+  MockSpec<TasksRepository>(),
+  MockSpec<SpacesRepository>(),
+  MockSpec<NotificationService>(),
+  MockSpec<CalendarService>(),
+])
 void main() {
   group('TasksService', () {
     late MockTasksRepository mockTasksRepo;
@@ -129,25 +126,23 @@ void main() {
 
         when(
           mockTasksRepo.createTask(
-            id: argThat(isA<String>(), named: 'id'),
-            spaceId: argThat(isA<String>(), named: 'spaceId'),
-            createdBy: argThat(isA<String>(), named: 'createdBy'),
-            title: argThat(isA<String>(), named: 'title'),
+            id: anyNamed('id'),
+            spaceId: anyNamed('spaceId'),
+            createdBy: anyNamed('createdBy'),
+            title: anyNamed('title'),
             description: anyNamed('description'),
-            status: argThat(isA<String>(), named: 'status'),
-            priority: argThat(isA<String>(), named: 'priority'),
+            status: anyNamed('status'),
+            priority: anyNamed('priority'),
             dueDate: anyNamed('dueDate'),
             parentTaskId: anyNamed('parentTaskId'),
-            isRecurring: argThat(isA<bool>(), named: 'isRecurring'),
+            isRecurring: anyNamed('isRecurring'),
             recurrenceRule: anyNamed('recurrenceRule'),
             sourceModule: anyNamed('sourceModule'),
             sourceEntityId: anyNamed('sourceEntityId'),
           ),
         ).thenAnswer((_) async => taskData);
 
-        when(
-          mockTasksRepo.getTaskById(argThat(isA<String>())),
-        ).thenAnswer((_) async => taskData);
+        when(mockTasksRepo.getTaskById(any)).thenAnswer((_) async => taskData);
 
         final result = await tasksService.createTask(
           spaceId: 'space-1',
@@ -158,16 +153,16 @@ void main() {
         expect(result['title'], equals('Buy groceries'));
         verify(
           mockTasksRepo.createTask(
-            id: argThat(isA<String>(), named: 'id'),
-            spaceId: 'space-1',
-            createdBy: 'user-1',
-            title: 'Buy groceries',
+            id: anyNamed('id'),
+            spaceId: captureAnyNamed('spaceId'),
+            createdBy: captureAnyNamed('createdBy'),
+            title: captureAnyNamed('title'),
             description: anyNamed('description'),
-            status: argThat(isA<String>(), named: 'status'),
-            priority: argThat(isA<String>(), named: 'priority'),
+            status: anyNamed('status'),
+            priority: anyNamed('priority'),
             dueDate: anyNamed('dueDate'),
             parentTaskId: anyNamed('parentTaskId'),
-            isRecurring: argThat(isA<bool>(), named: 'isRecurring'),
+            isRecurring: anyNamed('isRecurring'),
             recurrenceRule: anyNamed('recurrenceRule'),
             sourceModule: anyNamed('sourceModule'),
             sourceEntityId: anyNamed('sourceEntityId'),
@@ -343,15 +338,16 @@ void main() {
           'created_by': 'user-1',
           'title': 'Original',
         };
+        final updatedData = {...taskData, 'title': 'Updated'};
+        // First call returns original (for ownership check),
+        // second call returns updated (after update).
+        var callCount = 0;
         when(
           mockTasksRepo.getTaskById('task-1'),
-        ).thenAnswer((_) async => taskData);
+        ).thenAnswer((_) async => callCount++ == 0 ? taskData : updatedData);
         when(
-          mockTasksRepo.updateTask(
-            'task-1',
-            argThat(isA<Map<String, dynamic>>()),
-          ),
-        ).thenAnswer((_) async => {...taskData, 'title': 'Updated'});
+          mockTasksRepo.updateTask(any, any),
+        ).thenAnswer((_) async => updatedData);
 
         final result = await tasksService.updateTask(
           taskId: 'task-1',
@@ -371,15 +367,16 @@ void main() {
           'created_by': 'user-creator',
           'title': 'Original',
         };
+        final updatedData = {...taskData, 'title': 'Admin Updated'};
+        // First call returns original (for ownership check),
+        // second call returns updated (after update).
+        var callCount = 0;
         when(
           mockTasksRepo.getTaskById('task-1'),
-        ).thenAnswer((_) async => taskData);
+        ).thenAnswer((_) async => callCount++ == 0 ? taskData : updatedData);
         when(
-          mockTasksRepo.updateTask(
-            'task-1',
-            argThat(isA<Map<String, dynamic>>()),
-          ),
-        ).thenAnswer((_) async => {...taskData, 'title': 'Admin Updated'});
+          mockTasksRepo.updateTask(any, any),
+        ).thenAnswer((_) async => updatedData);
 
         final result = await tasksService.updateTask(
           taskId: 'task-1',

@@ -1,6 +1,5 @@
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/finances_provider.dart';
@@ -11,37 +10,28 @@ import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Finance dashboard with summary, chart placeholder, and recent entries.
-class FinancesScreen extends ConsumerStatefulWidget {
+class FinancesScreen extends ConsumerWidget {
   const FinancesScreen({super.key});
 
   @override
-  ConsumerState<FinancesScreen> createState() => _FinancesScreenState();
-}
-
-class _FinancesScreenState extends ConsumerState<FinancesScreen> {
-  @override
-  void initState() {
-    super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        ref.read(financesProvider.notifier).loadEntries(spaceId);
-        ref.read(financesProvider.notifier).loadSummary(spaceId);
-      }
-    });
-  }
-
-  @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
-    final state = ref.watch(financesProvider);
+    final asyncFinances = ref.watch(financesProvider);
     final filteredEntries = ref.watch(financeEntriesProvider);
     final summary = ref.watch(financeSummaryProvider);
     final spaceId = ref.watch(currentSpaceProvider)?.id;
+    final selectedType = ref.watch(financeTypeFilter);
 
-    if (state.isLoading && state.entries.isEmpty) {
+    // Determine selected type filter key
+    var selectedTypeKey = 'all';
+    if (selectedType == 'income') selectedTypeKey = 'income';
+    if (selectedType == 'expense') selectedTypeKey = 'expense';
+
+    if (asyncFinances.isLoading &&
+        (asyncFinances.valueOrNull?.isEmpty ?? true)) {
       return Scaffold(
         appBar: SpAppBar(
           title: context.l10n.translate('finances'),
@@ -51,28 +41,26 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
       );
     }
 
-    if (state.error != null && state.entries.isEmpty) {
+    if (asyncFinances.hasError &&
+        (asyncFinances.valueOrNull?.isEmpty ?? true)) {
       return Scaffold(
         appBar: SpAppBar(
           title: context.l10n.translate('finances'),
           showBackButton: true,
         ),
         body: SpErrorWidget(
-          message: state.error!,
+          message: asyncFinances.error is AppFailure
+              ? (asyncFinances.error as AppFailure).message
+              : '${asyncFinances.error}',
           onRetry: () {
+            ref.invalidate(financesProvider);
             if (spaceId != null) {
-              ref.read(financesProvider.notifier).loadEntries(spaceId);
               ref.read(financesProvider.notifier).loadSummary(spaceId);
             }
           },
         ),
       );
     }
-
-    // Determine selected type filter key
-    var selectedTypeKey = 'all';
-    if (state.selectedType == 'income') selectedTypeKey = 'income';
-    if (state.selectedType == 'expense') selectedTypeKey = 'expense';
 
     return Scaffold(
       appBar: SpAppBar(
@@ -81,8 +69,8 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
       ),
       body: RefreshIndicator(
         onRefresh: () async {
+          ref.invalidate(financesProvider);
           if (spaceId != null) {
-            await ref.read(financesProvider.notifier).loadEntries(spaceId);
             await ref.read(financesProvider.notifier).loadSummary(spaceId);
           }
         },
@@ -99,8 +87,8 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                     child: _SummaryCard(
                       title: context.l10n.translate('income'),
                       amount: summary != null
-                          ? '€${summary.totalIncome.toStringAsFixed(2)}'
-                          : '€0.00',
+                          ? '\u20AC${((summary['total_income'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}'
+                          : '\u20AC0.00',
                       icon: Icons.arrow_upward,
                       color: AppColors.success,
                       theme: theme,
@@ -111,8 +99,8 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                     child: _SummaryCard(
                       title: context.l10n.translate('expenses'),
                       amount: summary != null
-                          ? '€${summary.totalExpenses.toStringAsFixed(2)}'
-                          : '€0.00',
+                          ? '\u20AC${((summary['total_expenses'] as num?)?.toDouble() ?? 0).toStringAsFixed(2)}'
+                          : '\u20AC0.00',
                       icon: Icons.arrow_downward,
                       color: AppColors.error,
                       theme: theme,
@@ -121,31 +109,7 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                 ],
               ),
               const SizedBox(height: AppSpacing.sm),
-              Card(
-                child: Padding(
-                  padding: const EdgeInsets.all(AppSpacing.md),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        context.l10n.translate('balance'),
-                        style: theme.textTheme.titleSmall,
-                      ),
-                      Text(
-                        summary != null
-                            ? '€${summary.balance.toStringAsFixed(2)}'
-                            : '€0.00',
-                        style: theme.textTheme.titleLarge?.copyWith(
-                          fontWeight: FontWeight.bold,
-                          color: (summary?.balance ?? 0) >= 0
-                              ? AppColors.success
-                              : AppColors.error,
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
+              _BalanceCard(summary: summary, theme: theme),
               const SizedBox(height: AppSpacing.lg),
 
               // Income vs Expenses chart
@@ -158,76 +122,12 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
               const SizedBox(height: AppSpacing.md),
               SizedBox(
                 height: 200,
-                child:
-                    summary != null &&
-                        (summary.totalIncome > 0 || summary.totalExpenses > 0)
-                    ? PieChart(
-                        PieChartData(
-                          sectionsSpace: 3,
-                          centerSpaceRadius: 48,
-                          sections: [
-                            PieChartSectionData(
-                              value: summary.totalIncome,
-                              title: summary.totalIncome > 0
-                                  ? '€${summary.totalIncome.toStringAsFixed(0)}'
-                                  : '',
-                              color: AppColors.success,
-                              radius: 40,
-                              titleStyle:
-                                  theme.textTheme.labelSmall?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ) ??
-                                  const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                  ),
-                            ),
-                            PieChartSectionData(
-                              value: summary.totalExpenses,
-                              title: summary.totalExpenses > 0
-                                  ? '€${summary.totalExpenses.toStringAsFixed(0)}'
-                                  : '',
-                              color: AppColors.error,
-                              radius: 40,
-                              titleStyle:
-                                  theme.textTheme.labelSmall?.copyWith(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                  ) ??
-                                  const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 11,
-                                  ),
-                            ),
-                          ],
-                        ),
-                      )
-                    : Center(
-                        child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                            Icon(
-                              Icons.pie_chart_outline,
-                              size: 48,
-                              color: theme.colorScheme.onSurfaceVariant
-                                  .withValues(alpha: 0.5),
-                            ),
-                            const SizedBox(height: AppSpacing.sm),
-                            Text(
-                              'No data yet',
-                              style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                child: _buildChart(summary, theme, context),
               ),
               if (summary != null &&
-                  (summary.totalIncome > 0 || summary.totalExpenses > 0))
+                  (((summary['total_income'] as num?)?.toDouble() ?? 0) > 0 ||
+                      ((summary['total_expenses'] as num?)?.toDouble() ?? 0) >
+                          0))
                 Padding(
                   padding: const EdgeInsets.only(top: AppSpacing.sm),
                   child: Row(
@@ -260,15 +160,8 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                           selected: selectedTypeKey == filterKey,
                           label: Text(context.l10n.translate(filterKey)),
                           onSelected: (_) {
-                            if (filterKey == 'all') {
-                              ref
-                                  .read(financesProvider.notifier)
-                                  .setTypeFilter(null);
-                            } else {
-                              ref
-                                  .read(financesProvider.notifier)
-                                  .setTypeFilter(filterKey);
-                            }
+                            ref.read(financeTypeFilter.notifier).state =
+                                filterKey == 'all' ? null : filterKey;
                           },
                         ),
                       ),
@@ -289,7 +182,7 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                   ),
                   TextButton(
                     onPressed: () {
-                      ref.read(financesProvider.notifier).setTypeFilter(null);
+                      ref.read(financeTypeFilter.notifier).state = null;
                     },
                     child: Text(context.l10n.translate('viewAll')),
                   ),
@@ -307,13 +200,13 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
               else
                 ...filteredEntries.map(
                   (entry) => _EntryCard(
-                    title: entry.description ?? entry.category,
+                    title: entry.description ?? entry.category ?? 'general',
                     amount: entry.type == 'expense'
-                        ? '-€${entry.amount.toStringAsFixed(2)}'
-                        : '+€${entry.amount.toStringAsFixed(2)}',
+                        ? '-\u20AC${(entry.amountCents / 100).toStringAsFixed(2)}'
+                        : '+\u20AC${(entry.amountCents / 100).toStringAsFixed(2)}',
                     isExpense: entry.type == 'expense',
-                    category: entry.category,
-                    date: entry.date,
+                    category: entry.category ?? 'general',
+                    date: entry.date.toIso8601String().substring(0, 10),
                     theme: theme,
                   ),
                 ),
@@ -322,14 +215,94 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
         ),
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: () => _showCreateEntryDialog(context, spaceId),
+        onPressed: () => _showCreateEntryDialog(context, ref, spaceId),
         tooltip: 'Add finance entry',
         child: const Icon(Icons.add),
       ),
     );
   }
 
-  void _showCreateEntryDialog(BuildContext context, String? spaceId) {
+  Widget _buildChart(
+    Map<String, dynamic>? summary,
+    ThemeData theme,
+    BuildContext context,
+  ) {
+    final totalIncome = (summary?['total_income'] as num?)?.toDouble() ?? 0;
+    final totalExpenses = (summary?['total_expenses'] as num?)?.toDouble() ?? 0;
+
+    if (summary != null && (totalIncome > 0 || totalExpenses > 0)) {
+      return PieChart(
+        PieChartData(
+          sectionsSpace: 3,
+          centerSpaceRadius: 48,
+          sections: [
+            PieChartSectionData(
+              value: totalIncome,
+              title: totalIncome > 0
+                  ? '\u20AC${totalIncome.toStringAsFixed(0)}'
+                  : '',
+              color: AppColors.success,
+              radius: 40,
+              titleStyle:
+                  theme.textTheme.labelSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ) ??
+                  const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
+            ),
+            PieChartSectionData(
+              value: totalExpenses,
+              title: totalExpenses > 0
+                  ? '\u20AC${totalExpenses.toStringAsFixed(0)}'
+                  : '',
+              color: AppColors.error,
+              radius: 40,
+              titleStyle:
+                  theme.textTheme.labelSmall?.copyWith(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                  ) ??
+                  const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 11,
+                  ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.pie_chart_outline,
+            size: 48,
+            color: theme.colorScheme.onSurfaceVariant.withValues(alpha: 0.5),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          Text(
+            'No data yet',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: theme.colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showCreateEntryDialog(
+    BuildContext context,
+    WidgetRef ref,
+    String? spaceId,
+  ) {
     if (spaceId == null) return;
     final descController = TextEditingController();
     final amountController = TextEditingController();
@@ -401,6 +374,41 @@ class _FinancesScreenState extends ConsumerState<FinancesScreen> {
                 }
               },
               child: Text(context.l10n.translate('add')),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _BalanceCard extends StatelessWidget {
+  const _BalanceCard({required this.summary, required this.theme});
+
+  final Map<String, dynamic>? summary;
+  final ThemeData theme;
+
+  @override
+  Widget build(BuildContext context) {
+    final balance = (summary?['balance'] as num?)?.toDouble() ?? 0;
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(AppSpacing.md),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(
+              context.l10n.translate('balance'),
+              style: theme.textTheme.titleSmall,
+            ),
+            Text(
+              summary != null
+                  ? '\u20AC${balance.toStringAsFixed(2)}'
+                  : '\u20AC0.00',
+              style: theme.textTheme.titleLarge?.copyWith(
+                fontWeight: FontWeight.bold,
+                color: balance >= 0 ? AppColors.success : AppColors.error,
+              ),
             ),
           ],
         ),

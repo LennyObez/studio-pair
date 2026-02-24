@@ -6,6 +6,7 @@ import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/auth_provider.dart';
 import 'package:studio_pair/src/providers/messaging_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 
@@ -30,18 +31,13 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   void initState() {
     super.initState();
     SchedulerBinding.instance.addPostFrameCallback((_) {
-      _loadMessages();
+      _selectConversation();
     });
   }
 
-  void _loadMessages() {
-    final spaceId = ref.read(currentSpaceProvider)?.id;
-    if (spaceId == null) return;
-
-    // Select this conversation in the provider
-    ref.read(messagingProvider.notifier).selectConversation(widget.id);
-    // Load messages for this conversation
-    ref.read(messagingProvider.notifier).loadMessages(spaceId, widget.id);
+  void _selectConversation() {
+    // Set the current conversation ID so messagesProvider auto-fetches messages.
+    ref.read(currentConversationIdProvider.notifier).state = widget.id;
   }
 
   @override
@@ -102,7 +98,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     if (!mounted) return;
     // Send as a message with image attachment reference
     await ref
-        .read(messagingProvider.notifier)
+        .read(messagesProvider.notifier)
         .sendMessage(spaceId, widget.id, '[Image: ${pickedFile.name}]');
 
     if (!mounted) return;
@@ -117,18 +113,18 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
 
   void _showEmojiQuickPick() {
     const emojis = [
-      '😀',
-      '😂',
-      '❤️',
-      '👍',
-      '🎉',
-      '🔥',
-      '😢',
-      '🤔',
-      '👋',
-      '✨',
-      '🙏',
-      '💪',
+      '\u{1F600}',
+      '\u{1F602}',
+      '\u2764\uFE0F',
+      '\u{1F44D}',
+      '\u{1F389}',
+      '\u{1F525}',
+      '\u{1F622}',
+      '\u{1F914}',
+      '\u{1F44B}',
+      '\u2728',
+      '\u{1F64F}',
+      '\u{1F4AA}',
     ];
     showModalBottomSheet<void>(
       context: context,
@@ -165,7 +161,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
     final spaceId = ref.read(currentSpaceProvider)?.id;
     if (spaceId == null) return;
 
-    ref.read(messagingProvider.notifier).sendMessage(spaceId, widget.id, text);
+    ref.read(messagesProvider.notifier).sendMessage(spaceId, widget.id, text);
     _messageController.clear();
 
     // Scroll to bottom after sending
@@ -183,18 +179,25 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final messagingState = ref.watch(messagingProvider);
-    final messages = messagingState.messages;
-    final currentConversation = messagingState.currentConversation;
+    final asyncMessages = ref.watch(messagesProvider);
+    final messages = ref.watch(currentMessagesProvider);
+    final conversations = ref.watch(conversationListProvider);
+    final currentConversation = conversations
+        .cast<CachedConversation?>()
+        .firstWhere((c) => c?.id == widget.id, orElse: () => null);
     final currentUserId = ref.watch(currentUserProvider)?.id ?? '';
-    final isLoading = messagingState.isLoading;
+    final isLoading = asyncMessages.isLoading;
+    final typingUsers = ref.watch(typingUsersProvider);
 
     // Show error snackbar
-    ref.listen<MessagingState>(messagingProvider, (previous, next) {
-      if (next.error != null && next.error != previous?.error) {
+    ref.listen<AsyncValue<List<CachedMessage>>>(messagesProvider, (
+      previous,
+      next,
+    ) {
+      if (next.hasError && next.error != previous?.error) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.error!),
+            content: Text('${next.error}'),
             backgroundColor: theme.colorScheme.error,
           ),
         );
@@ -366,7 +369,7 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
           ),
 
           // Typing indicator
-          if (messagingState.typingUsers.isNotEmpty)
+          if (typingUsers.isNotEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.md,
@@ -395,10 +398,10 @@ class _ConversationScreenState extends ConsumerState<ConversationScreen> {
                   ),
                   const SizedBox(width: AppSpacing.xs),
                   Text(
-                    messagingState.typingUsers.length == 1
+                    typingUsers.length == 1
                         ? context.l10n.translate('someoneTyping')
                         : context.l10n.translateWith('peopleTyping', [
-                            '${messagingState.typingUsers.length}',
+                            '${typingUsers.length}',
                           ]),
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
@@ -482,7 +485,7 @@ class _MessageBubble extends StatelessWidget {
     required this.theme,
   });
 
-  final Message message;
+  final CachedMessage message;
   final bool isMine;
   final ThemeData theme;
 
@@ -529,7 +532,7 @@ class _MessageBubble extends StatelessWidget {
               Padding(
                 padding: const EdgeInsets.only(bottom: 2),
                 child: Text(
-                  message.senderName,
+                  message.senderId,
                   style: theme.textTheme.labelSmall?.copyWith(
                     fontWeight: FontWeight.w600,
                     color: theme.colorScheme.primary,
@@ -548,7 +551,7 @@ class _MessageBubble extends StatelessWidget {
             Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (message.editedAt != null)
+                if (message.isEdited)
                   Text(
                     '${context.l10n.translate('edited')} ',
                     style: theme.textTheme.labelSmall?.copyWith(

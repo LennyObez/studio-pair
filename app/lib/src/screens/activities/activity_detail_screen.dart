@@ -6,6 +6,7 @@ import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/activities_provider.dart';
 import 'package:studio_pair/src/providers/auth_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
@@ -28,39 +29,35 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final activitiesState = ref.watch(activitiesProvider);
+    final asyncActivities = ref.watch(activitiesProvider);
     final currentUserId = ref.watch(currentUserProvider)?.id;
     final spaceId = ref.watch(currentSpaceProvider)?.id;
     final members = ref.watch(spaceMembersProvider);
 
+    final activities = asyncActivities.valueOrNull ?? [];
+
     // Find the activity by ID
-    final activity = activitiesState.activities.firstWhere(
-      (a) => a.id == widget.id,
-      orElse: () => Activity(
-        id: '',
-        title: context.l10n.translate('noResults'),
-        privacy: 'shared',
-        status: 'active',
-        mode: 'unlinked',
-      ),
+    final activityOrNull = activities.cast<CachedActivity?>().firstWhere(
+      (a) => a?.id == widget.id,
+      orElse: () => null,
     );
 
-    final isCreator = activity.createdBy == currentUserId;
-    final isCompleted = activity.status == 'completed';
-
-    // Show error snackbar
-    ref.listen<ActivitiesState>(activitiesProvider, (previous, next) {
-      if (next.error != null && next.error != previous?.error) {
+    // Show error snackbar on async errors
+    ref.listen<AsyncValue<List<CachedActivity>>>(activitiesProvider, (
+      previous,
+      next,
+    ) {
+      if (next.hasError && next.error != previous?.error) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.error!),
+            content: Text(next.error.toString()),
             backgroundColor: theme.colorScheme.error,
           ),
         );
       }
     });
 
-    if (activity.id.isEmpty) {
+    if (activityOrNull == null) {
       return Scaffold(
         appBar: SpAppBar(
           title: context.l10n.translate('activityDetail'),
@@ -69,6 +66,10 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
         body: Center(child: Text(context.l10n.translate('activityNotFound'))),
       );
     }
+
+    final activity = activityOrNull;
+    final isCreator = activity.createdBy == currentUserId;
+    final isCompleted = activity.status == 'completed';
 
     return Scaffold(
       appBar: SpAppBar(
@@ -147,18 +148,18 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
                   // Category and status
                   Row(
                     children: [
-                      if (activity.category != null)
+                      if (activity.category.isNotEmpty)
                         Chip(
                           avatar: Icon(
-                            _categoryIcon(activity.category!),
+                            _categoryIcon(activity.category),
                             size: 16,
                           ),
-                          label: Text(_capitalizeFirst(activity.category!)),
+                          label: Text(_capitalizeFirst(activity.category)),
                           backgroundColor: _categoryColor(
-                            activity.category!,
+                            activity.category,
                           ).withValues(alpha: 0.12),
                         ),
-                      if (activity.category != null)
+                      if (activity.category.isNotEmpty)
                         const SizedBox(width: AppSpacing.sm),
                       Chip(
                         label: Text(_capitalizeFirst(activity.status)),
@@ -280,54 +281,6 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
                   ),
                   const SizedBox(height: AppSpacing.lg),
 
-                  // Average rating
-                  if (activity.averageRating != null &&
-                      activity.voteCount != null &&
-                      activity.voteCount! > 0) ...[
-                    Text(
-                      context.l10n.translate('averageRating'),
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(height: AppSpacing.sm),
-                    Row(
-                      children: [
-                        ...List.generate(5, (index) {
-                          final rating = activity.averageRating!;
-                          if (index < rating.floor()) {
-                            return Icon(
-                              Icons.star,
-                              color: Colors.amber[600],
-                              size: 28,
-                            );
-                          } else if (index < rating.ceil() &&
-                              rating - index >= 0.5) {
-                            return Icon(
-                              Icons.star_half,
-                              color: Colors.amber[600],
-                              size: 28,
-                            );
-                          } else {
-                            return Icon(
-                              Icons.star_border,
-                              color: Colors.amber[600],
-                              size: 28,
-                            );
-                          }
-                        }),
-                        const SizedBox(width: AppSpacing.sm),
-                        Text(
-                          '${activity.averageRating!.toStringAsFixed(1)} (${activity.voteCount} votes)',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: AppSpacing.lg),
-                  ],
-
                   // Member votes (placeholder)
                   Text(
                     context.l10n.translate('memberVotes'),
@@ -417,7 +370,7 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
                       width: double.infinity,
                       height: 52,
                       child: ElevatedButton.icon(
-                        onPressed: activitiesState.isLoading
+                        onPressed: asyncActivities.isLoading
                             ? null
                             : () async {
                                 if (spaceId == null) return;
@@ -436,7 +389,7 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
                                   );
                                 }
                               },
-                        icon: activitiesState.isLoading
+                        icon: asyncActivities.isLoading
                             ? const SizedBox(
                                 height: 20,
                                 width: 20,
@@ -487,7 +440,7 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
                       width: double.infinity,
                       height: 52,
                       child: OutlinedButton.icon(
-                        onPressed: activitiesState.isLoading
+                        onPressed: asyncActivities.isLoading
                             ? null
                             : () async {
                                 final confirm = await showDialog<bool>(
@@ -573,7 +526,7 @@ class _ActivityDetailScreenState extends ConsumerState<ActivityDetailScreen> {
   void _showEditActivityDialog(
     BuildContext context,
     WidgetRef ref,
-    Activity activity,
+    CachedActivity activity,
     String? spaceId,
   ) {
     if (spaceId == null) return;

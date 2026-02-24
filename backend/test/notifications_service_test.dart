@@ -1,13 +1,12 @@
+import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
 import 'package:studio_pair_backend/src/modules/notifications/notifications_repository.dart';
 import 'package:studio_pair_backend/src/modules/notifications/notifications_service.dart';
 import 'package:test/test.dart';
 
-// --- Manual mocks ---
+import 'notifications_service_test.mocks.dart';
 
-class MockNotificationsRepository extends Mock
-    implements NotificationsRepository {}
-
+@GenerateNiceMocks([MockSpec<NotificationsRepository>()])
 void main() {
   group('NotificationsModuleService', () {
     late MockNotificationsRepository mockRepo;

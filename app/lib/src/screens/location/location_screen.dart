@@ -8,8 +8,9 @@ import 'package:studio_pair/src/providers/space_provider.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
-
+import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart' hide LocationShare;
 
 /// Location sharing screen with map placeholder and sharing controls.
 class LocationScreen extends ConsumerStatefulWidget {
@@ -27,7 +28,7 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
   }
 
   void _loadShares() {
-    final spaceId = ref.read(spaceProvider).currentSpace?.id;
+    final spaceId = ref.read(spaceProvider).valueOrNull?.currentSpace?.id;
     if (spaceId != null) {
       ref.read(locationProvider.notifier).loadActiveShares(spaceId);
     }
@@ -117,29 +118,49 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final state = ref.watch(locationProvider);
-    final spaceId = ref.watch(spaceProvider).currentSpace?.id ?? '';
+    final asyncLocation = ref.watch(locationProvider);
+    final spaceId =
+        ref.watch(spaceProvider).valueOrNull?.currentSpace?.id ?? '';
     final theme = Theme.of(context);
+    final activeShares = asyncLocation.valueOrNull?.activeShares ?? [];
+    final isSharing = asyncLocation.valueOrNull?.isSharing ?? false;
+    final myActiveShare = asyncLocation.valueOrNull?.myActiveShare;
 
     return Scaffold(
       appBar: SpAppBar(
         title: context.l10n.translate('location'),
         showBackButton: true,
       ),
-      body: _buildBody(state, theme, spaceId),
+      body: _buildBody(
+        asyncLocation,
+        theme,
+        spaceId,
+        activeShares,
+        isSharing,
+        myActiveShare,
+      ),
     );
   }
 
-  Widget _buildBody(LocationState state, ThemeData theme, String spaceId) {
-    if (state.isLoading && state.activeShares.isEmpty) {
+  Widget _buildBody(
+    AsyncValue<LocationData> asyncLocation,
+    ThemeData theme,
+    String spaceId,
+    List<LocationShare> activeShares,
+    bool isSharing,
+    LocationShare? myActiveShare,
+  ) {
+    if (asyncLocation.isLoading && activeShares.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.activeShares.isEmpty) {
-      // Clear the error and show normal UI with empty state when offline
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        ref.read(locationProvider.notifier).clearError();
-      });
+    if (asyncLocation.hasError && activeShares.isEmpty) {
+      return SpErrorWidget(
+        message: asyncLocation.error is AppFailure
+            ? (asyncLocation.error as AppFailure).message
+            : '${asyncLocation.error}',
+        onRetry: _loadShares,
+      );
     }
 
     return Column(
@@ -168,9 +189,9 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
                     ),
                   ),
                   Text(
-                    state.activeShares.isNotEmpty
+                    activeShares.isNotEmpty
                         ? context.l10n.translateWith('activeSharesCount', [
-                            '${state.activeShares.length}',
+                            '${activeShares.length}',
                           ])
                         : context.l10n.translate('locationSharingMap'),
                     style: theme.textTheme.bodySmall?.copyWith(
@@ -237,7 +258,7 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
                 const SizedBox(height: AppSpacing.lg),
 
                 // Stop sharing button (visible when sharing)
-                if (state.isSharing && state.myActiveShare != null)
+                if (isSharing && myActiveShare != null)
                   Padding(
                     padding: const EdgeInsets.only(bottom: AppSpacing.md),
                     child: SizedBox(
@@ -247,7 +268,7 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
                         onPressed: () {
                           ref
                               .read(locationProvider.notifier)
-                              .stopSharing(spaceId, state.myActiveShare!.id);
+                              .stopSharing(spaceId, myActiveShare.id);
                         },
                         icon: const Icon(Icons.stop, color: AppColors.error),
                         label: Text(context.l10n.translate('stopSharing')),
@@ -287,7 +308,7 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
                   child: Column(
                     children: [
                       // Show active shares from other members
-                      ...state.activeShares.map((share) {
+                      ...activeShares.map((share) {
                         final currentUserId = ref.read(currentUserProvider)?.id;
                         final isMine = share.userId == currentUserId;
                         final remaining = share.expiresAt != null
@@ -332,7 +353,7 @@ class _LocationScreenState extends ConsumerState<LocationScreen> {
                         );
                       }),
                       // Show "not sharing" for current user if not sharing
-                      if (!state.isSharing)
+                      if (!isSharing)
                         ListTile(
                           leading: const CircleAvatar(
                             backgroundColor: AppColors.grey200,

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
@@ -29,37 +28,22 @@ class DashboardScreen extends ConsumerStatefulWidget {
 }
 
 class _DashboardScreenState extends ConsumerState<DashboardScreen> {
-  @override
-  void initState() {
-    super.initState();
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      _loadAllData();
-    });
-  }
-
   void _loadAllData() {
+    ref.invalidate(activitiesProvider);
+    ref.invalidate(tasksProvider);
+    ref.invalidate(calendarProvider);
+    ref.invalidate(conversationsProvider);
+    ref.invalidate(financesProvider);
+    ref.invalidate(groceryListsProvider);
+    ref.invalidate(remindersProvider);
+    ref.invalidate(pollsProvider);
+    ref.invalidate(notificationsProvider);
+
+    // Also reload finance summary.
     final spaceId = ref.read(currentSpaceProvider)?.id;
-    if (spaceId == null) return;
-
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month);
-    final monthEnd = DateTime(
-      now.year,
-      now.month + 1,
-    ).subtract(const Duration(milliseconds: 1));
-
-    ref.read(activitiesProvider.notifier).loadActivities(spaceId);
-    ref.read(tasksProvider.notifier).loadTasks(spaceId);
-    ref
-        .read(calendarProvider.notifier)
-        .loadEvents(spaceId, monthStart, monthEnd);
-    ref.read(messagingProvider.notifier).loadConversations(spaceId);
-    ref.read(financesProvider.notifier).loadEntries(spaceId);
-    ref.read(financesProvider.notifier).loadSummary(spaceId);
-    ref.read(groceryProvider.notifier).loadLists(spaceId);
-    ref.read(remindersProvider.notifier).loadReminders();
-    ref.read(pollsProvider.notifier).loadPolls(spaceId);
-    ref.read(notificationsProvider.notifier).loadNotifications();
+    if (spaceId != null) {
+      ref.read(financesProvider.notifier).loadSummary(spaceId);
+    }
   }
 
   String _greeting(BuildContext context) {
@@ -76,15 +60,14 @@ class _DashboardScreenState extends ConsumerState<DashboardScreen> {
     final activityCount = ref.watch(activityListProvider).length;
     final taskCount = ref.watch(pendingTaskCountProvider);
     final calendarCount = ref.watch(calendarEventsProvider).length;
-    final unreadMessages = ref.watch(totalUnreadMessagesProvider);
+    const unreadMessages = 0;
     final summary = ref.watch(financeSummaryProvider);
-    final groceryUnchecked = ref.watch(uncheckedCountProvider);
+    final groceryUnchecked = ref.watch(groceryProvider).length;
     final reminderCount = ref.watch(upcomingRemindersProvider).length;
     final pollCount = ref.watch(activePollCountProvider);
 
-    final balanceStr = summary != null
-        ? '\u20ac${summary.balance.toStringAsFixed(0)}'
-        : '\u20ac0';
+    final balance = (summary?['balance'] as num?)?.toDouble() ?? 0.0;
+    final balanceStr = '\u20ac${balance.toStringAsFixed(0)}';
 
     return [
       _DashboardWidget(

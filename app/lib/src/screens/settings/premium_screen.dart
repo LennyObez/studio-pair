@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
+import 'package:studio_pair/src/providers/purchase_provider.dart';
 import 'package:studio_pair/src/providers/service_providers.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
 import 'package:studio_pair/src/services/purchase/purchase_service.dart';
@@ -37,7 +38,9 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final state = ref.watch(purchaseProvider);
+    final purchaseAsync = ref.watch(purchaseProvider);
+    final state = purchaseAsync.valueOrNull ?? const PurchaseState();
+    final isLoading = purchaseAsync.isLoading;
     final space = ref.watch(currentSpaceProvider);
 
     return Scaffold(
@@ -45,7 +48,7 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
         title: context.l10n.translate('subscription'),
         showBackButton: true,
       ),
-      body: state.isLoading && state.entitlementSummary == null
+      body: isLoading && state.entitlementSummary == null
           ? const Center(child: CircularProgressIndicator())
           : ListView(
               padding: const EdgeInsets.all(AppSpacing.md),
@@ -75,7 +78,7 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
                 if (!state.isPremium) ...[
                   _UpgradeButtons(
                     products: state.availableProducts,
-                    isLoading: state.isLoading,
+                    isLoading: isLoading,
                     spaceId: space?.id,
                     onPurchase: (productId) {
                       if (space != null) {
@@ -88,7 +91,7 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
                   const SizedBox(height: AppSpacing.md),
                   Center(
                     child: TextButton(
-                      onPressed: state.isLoading
+                      onPressed: isLoading
                           ? null
                           : () => ref.read(purchaseProvider.notifier).restore(),
                       child: Text(context.l10n.translate('restorePurchases')),
@@ -97,7 +100,7 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
                 ] else ...[
                   _PremiumManagement(
                     subscription: state.activeSubscription,
-                    isLoading: state.isLoading,
+                    isLoading: isLoading,
                     theme: theme,
                     onCancel: () {
                       if (space != null) {
@@ -108,14 +111,14 @@ class _PremiumScreenState extends ConsumerState<PremiumScreen> {
                 ],
 
                 // Error message
-                if (state.error != null) ...[
+                if (purchaseAsync.hasError) ...[
                   const SizedBox(height: AppSpacing.md),
                   Card(
                     color: AppColors.error.withValues(alpha: 0.1),
                     child: Padding(
                       padding: const EdgeInsets.all(AppSpacing.md),
                       child: Text(
-                        state.error!,
+                        purchaseAsync.error.toString(),
                         style: theme.textTheme.bodyMedium?.copyWith(
                           color: AppColors.error,
                         ),

@@ -3,40 +3,30 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/charter_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
 import 'package:studio_pair/src/widgets/common/sp_empty_state.dart';
 import 'package:studio_pair/src/widgets/common/sp_error_widget.dart';
 import 'package:studio_pair/src/widgets/common/sp_loading.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Charter screen with rich text display, version history, and acknowledgement.
-class CharterScreen extends ConsumerStatefulWidget {
+class CharterScreen extends ConsumerWidget {
   const CharterScreen({super.key});
 
   @override
-  ConsumerState<CharterScreen> createState() => _CharterScreenState();
-}
-
-class _CharterScreenState extends ConsumerState<CharterScreen> {
-  @override
-  void initState() {
-    super.initState();
-    _loadCharter();
-  }
-
-  void _loadCharter() {
-    final spaceId = ref.read(spaceProvider).currentSpace?.id;
-    if (spaceId != null) {
-      ref.read(charterProvider.notifier).loadCharter(spaceId);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final state = ref.watch(charterProvider);
-    final spaceId = ref.watch(spaceProvider).currentSpace?.id ?? '';
+  Widget build(BuildContext context, WidgetRef ref) {
+    final asyncCharter = ref.watch(charterProvider);
+    final spaceId =
+        ref.watch(spaceProvider).valueOrNull?.currentSpace?.id ?? '';
     final theme = Theme.of(context);
+
+    final charter = asyncCharter.valueOrNull;
+    final currentContent = charter?.content ?? '';
+    final currentVersion = charter?.versionNumber ?? 0;
+    final isAcknowledged = charter?.isAcknowledged ?? false;
 
     return Scaffold(
       appBar: SpAppBar(
@@ -46,36 +36,57 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
           IconButton(
             icon: const Icon(Icons.history),
             onPressed: () {
-              ref.read(charterProvider.notifier).loadVersions(spaceId);
-              _showVersionHistory(context, spaceId);
+              ref.invalidate(charterVersionsProvider);
+              _showVersionHistory(context, ref, spaceId);
             },
             tooltip: context.l10n.translate('history'),
           ),
           IconButton(
             icon: const Icon(Icons.edit),
-            onPressed: () => _showEditCharterDialog(context, spaceId, state),
+            onPressed: () => _showEditCharterDialog(
+              context,
+              ref,
+              spaceId,
+              currentContent,
+              currentVersion,
+            ),
             tooltip: 'Edit',
           ),
         ],
       ),
-      body: _buildBody(state, theme, spaceId),
+      body: _buildBody(
+        context,
+        ref,
+        asyncCharter,
+        theme,
+        spaceId,
+        currentContent,
+        currentVersion,
+        isAcknowledged,
+      ),
     );
   }
 
-  void _showVersionHistory(BuildContext context, String spaceId) {
+  void _showVersionHistory(
+    BuildContext context,
+    WidgetRef ref,
+    String spaceId,
+  ) {
     showModalBottomSheet<void>(
       context: context,
       builder: (ctx) {
         return Consumer(
           builder: (ctx, ref, _) {
-            final state = ref.watch(charterProvider);
-            if (state.isLoading) {
+            final asyncVersions = ref.watch(charterVersionsProvider);
+            final versions = asyncVersions.valueOrNull ?? [];
+
+            if (asyncVersions.isLoading && versions.isEmpty) {
               return const SizedBox(
                 height: 200,
                 child: Center(child: SpLoading()),
               );
             }
-            if (state.versions.isEmpty) {
+            if (versions.isEmpty) {
               return SizedBox(
                 height: 200,
                 child: Center(
@@ -86,10 +97,10 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
             return ListView.separated(
               shrinkWrap: true,
               padding: const EdgeInsets.all(AppSpacing.md),
-              itemCount: state.versions.length,
+              itemCount: versions.length,
               separatorBuilder: (_, __) => const Divider(height: 1),
               itemBuilder: (ctx, index) {
-                final version = state.versions[index];
+                final version = versions[index];
                 return ListTile(
                   leading: CircleAvatar(
                     child: Text('v${version.versionNumber}'),
@@ -114,10 +125,12 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
 
   void _showEditCharterDialog(
     BuildContext context,
+    WidgetRef ref,
     String spaceId,
-    CharterState state,
+    String currentContent,
+    int currentVersion,
   ) {
-    final controller = TextEditingController(text: state.currentContent);
+    final controller = TextEditingController(text: currentContent);
 
     showModalBottomSheet<void>(
       context: context,
@@ -137,7 +150,7 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
               Text('Edit charter', style: Theme.of(ctx).textTheme.titleLarge),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                '${context.l10n.translate('currentVersion')}: ${state.currentVersion}',
+                '${context.l10n.translate('currentVersion')}: $currentVersion',
                 style: Theme.of(ctx).textTheme.labelSmall,
               ),
               const SizedBox(height: AppSpacing.md),
@@ -184,16 +197,30 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
     );
   }
 
-  Widget _buildBody(CharterState state, ThemeData theme, String spaceId) {
-    if (state.isLoading && state.currentContent.isEmpty) {
+  Widget _buildBody(
+    BuildContext context,
+    WidgetRef ref,
+    AsyncValue<CachedCharter?> asyncCharter,
+    ThemeData theme,
+    String spaceId,
+    String currentContent,
+    int currentVersion,
+    bool isAcknowledged,
+  ) {
+    if (asyncCharter.isLoading && currentContent.isEmpty) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null) {
-      return SpErrorWidget(message: state.error!, onRetry: _loadCharter);
+    if (asyncCharter.hasError) {
+      return SpErrorWidget(
+        message: asyncCharter.error is AppFailure
+            ? (asyncCharter.error as AppFailure).message
+            : '${asyncCharter.error}',
+        onRetry: () => ref.invalidate(charterProvider),
+      );
     }
 
-    if (state.currentContent.isEmpty) {
+    if (currentContent.isEmpty) {
       return SpEmptyState(
         icon: Icons.description_outlined,
         title: context.l10n.translate('noCharter'),
@@ -226,7 +253,7 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
                           ),
                         ),
                         Text(
-                          '${context.l10n.translate('currentVersion')} ${state.currentVersion}',
+                          '${context.l10n.translate('currentVersion')} $currentVersion',
                           style: theme.textTheme.labelSmall?.copyWith(
                             color: theme.colorScheme.onSurfaceVariant,
                           ),
@@ -241,7 +268,7 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
           const SizedBox(height: AppSpacing.lg),
 
           // Charter content -- render from provider
-          ..._renderCharterContent(state.currentContent, theme),
+          ..._renderCharterContent(currentContent, theme),
 
           const SizedBox(height: AppSpacing.xl),
 
@@ -252,22 +279,22 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
               child: Row(
                 children: [
                   Icon(
-                    state.isAcknowledged ? Icons.check_circle : Icons.pending,
-                    color: state.isAcknowledged
+                    isAcknowledged ? Icons.check_circle : Icons.pending,
+                    color: isAcknowledged
                         ? AppColors.success
                         : AppColors.warning,
-                    semanticLabel: state.isAcknowledged
+                    semanticLabel: isAcknowledged
                         ? 'Acknowledged'
                         : 'Pending acknowledgement',
                   ),
                   const SizedBox(width: AppSpacing.sm),
                   Expanded(
                     child: Text(
-                      state.isAcknowledged
+                      isAcknowledged
                           ? 'Charter acknowledged'
                           : 'Acknowledgement pending',
                       style: theme.textTheme.bodyMedium?.copyWith(
-                        color: state.isAcknowledged
+                        color: isAcknowledged
                             ? AppColors.success
                             : AppColors.warning,
                       ),
@@ -279,7 +306,7 @@ class _CharterScreenState extends ConsumerState<CharterScreen> {
           ),
           const SizedBox(height: AppSpacing.md),
 
-          if (!state.isAcknowledged)
+          if (!isAcknowledged)
             SizedBox(
               width: double.infinity,
               height: 48,

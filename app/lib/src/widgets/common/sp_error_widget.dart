@@ -11,12 +11,16 @@ class SpErrorWidget extends StatelessWidget {
     this.onRetry,
     this.icon = Icons.error_outline,
     this.compact = false,
+    this.failure,
   });
 
   final String message;
   final VoidCallback? onRetry;
   final IconData icon;
   final bool compact;
+
+  /// Optional structured failure object for richer error display.
+  final Object? failure;
 
   @override
   Widget build(BuildContext context) {

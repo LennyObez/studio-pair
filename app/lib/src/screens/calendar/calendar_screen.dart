@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:studio_pair/src/i18n/app_localizations.dart';
 import 'package:studio_pair/src/providers/calendar_provider.dart';
 import 'package:studio_pair/src/providers/space_provider.dart';
+import 'package:studio_pair/src/services/database/app_database.dart';
 import 'package:studio_pair/src/theme/app_colors.dart';
 import 'package:studio_pair/src/theme/app_spacing.dart';
 import 'package:studio_pair/src/widgets/common/sp_app_bar.dart';
@@ -31,30 +31,13 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
     super.initState();
     _tabController = TabController(length: 3, vsync: this, initialIndex: 2);
     _tabController.addListener(_onTabChanged);
-
-    SchedulerBinding.instance.addPostFrameCallback((_) {
-      final spaceId = ref.read(currentSpaceProvider)?.id;
-      if (spaceId != null) {
-        _loadEvents(spaceId);
-      }
-    });
   }
 
   void _onTabChanged() {
     if (!_tabController.indexIsChanging) {
-      ref
-          .read(calendarProvider.notifier)
-          .setViewMode(_viewModes[_tabController.index]);
+      ref.read(calendarViewModeProvider.notifier).state =
+          _viewModes[_tabController.index];
     }
-  }
-
-  void _loadEvents(String spaceId) {
-    final now = DateTime.now();
-    final monthStart = DateTime(now.year, now.month);
-    final monthEnd = DateTime(now.year, now.month + 1, 0, 23, 59, 59);
-    ref
-        .read(calendarProvider.notifier)
-        .loadEvents(spaceId, monthStart, monthEnd);
   }
 
   @override
@@ -67,7 +50,9 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final state = ref.watch(calendarProvider);
+    final asyncCalendar = ref.watch(calendarProvider);
+    final events = ref.watch(calendarEventsProvider);
+    final selectedDate = ref.watch(selectedDateProvider);
     final spaceId = ref.watch(currentSpaceProvider)?.id;
 
     return Scaffold(
@@ -76,7 +61,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
         actions: [
           TextButton(
             onPressed: () {
-              ref.read(calendarProvider.notifier).selectDate(DateTime.now());
+              ref.read(selectedDateProvider.notifier).state = DateTime.now();
             },
             child: Text(context.l10n.translate('today')),
           ),
@@ -90,7 +75,13 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
           ],
         ),
       ),
-      body: _buildBody(theme, state, spaceId),
+      body: _buildBody(
+        theme: theme,
+        asyncCalendar: asyncCalendar,
+        events: events,
+        selectedDate: selectedDate,
+        spaceId: spaceId,
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _showCreateEventDialog(context, spaceId),
         tooltip: context.l10n.translate('addEvent'),
@@ -99,17 +90,24 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
     );
   }
 
-  Widget _buildBody(ThemeData theme, CalendarState state, String? spaceId) {
-    if (state.isLoading && state.events.isEmpty) {
+  Widget _buildBody({
+    required ThemeData theme,
+    required AsyncValue<List<CachedCalendarEvent>> asyncCalendar,
+    required List<CachedCalendarEvent> events,
+    required DateTime selectedDate,
+    required String? spaceId,
+  }) {
+    if (asyncCalendar.isLoading &&
+        (asyncCalendar.valueOrNull?.isEmpty ?? true)) {
       return const Center(child: SpLoading());
     }
 
-    if (state.error != null && state.events.isEmpty) {
+    if (asyncCalendar.hasError &&
+        (asyncCalendar.valueOrNull?.isEmpty ?? true)) {
       return SpErrorWidget(
-        message: state.error!,
-        onRetry: () {
-          if (spaceId != null) _loadEvents(spaceId);
-        },
+        message: asyncCalendar.error.toString(),
+        failure: asyncCalendar.error,
+        onRetry: () => ref.invalidate(calendarProvider),
       );
     }
 
@@ -118,21 +116,21 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
       children: [
         _DayView(
           theme: theme,
-          events: state.events,
-          selectedDate: state.selectedDate ?? DateTime.now(),
+          events: events,
+          selectedDate: selectedDate,
           onEventTap: (event) => _showEventDetailSheet(context, event, spaceId),
         ),
         _WeekView(
           theme: theme,
-          events: state.events,
+          events: events,
           onEventTap: (event) => _showEventDetailSheet(context, event, spaceId),
         ),
         _MonthView(
           theme: theme,
-          events: state.events,
-          selectedDate: state.selectedDate ?? DateTime.now(),
+          events: events,
+          selectedDate: selectedDate,
           onDateSelected: (date) {
-            ref.read(calendarProvider.notifier).selectDate(date);
+            ref.read(selectedDateProvider.notifier).state = date;
           },
           onEventTap: (event) => _showEventDetailSheet(context, event, spaceId),
         ),
@@ -145,8 +143,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
 
     final titleController = TextEditingController();
     final descriptionController = TextEditingController();
-    final selectedDate =
-        ref.read(calendarProvider).selectedDate ?? DateTime.now();
+    final selectedDate = ref.read(selectedDateProvider);
     var startAt = DateTime(
       selectedDate.year,
       selectedDate.month,
@@ -371,7 +368,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(
-                            error ??
+                            error?.toString() ??
                                 context.l10n.translate('failedToCreateEvent'),
                           ),
                         ),
@@ -390,7 +387,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
 
   void _showEventDetailSheet(
     BuildContext context,
-    CalendarEvent event,
+    CachedCalendarEvent event,
     String? spaceId,
   ) {
     final theme = Theme.of(context);
@@ -546,7 +543,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
                         messenger.showSnackBar(
                           SnackBar(
                             content: Text(
-                              error ??
+                              error?.toString() ??
                                   context.l10n.translate('failedToDeleteEvent'),
                             ),
                           ),
@@ -580,7 +577,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
 
   void _showEditEventDialog(
     BuildContext context,
-    CalendarEvent event,
+    CachedCalendarEvent event,
     String? spaceId,
   ) {
     if (spaceId == null) return;
@@ -790,7 +787,7 @@ class _CalendarScreenState extends ConsumerState<CalendarScreen>
                       messenger.showSnackBar(
                         SnackBar(
                           content: Text(
-                            error ??
+                            error?.toString() ??
                                 context.l10n.translate('failedToUpdateEvent'),
                           ),
                         ),
@@ -817,9 +814,9 @@ class _DayView extends StatelessWidget {
   });
 
   final ThemeData theme;
-  final List<CalendarEvent> events;
+  final List<CachedCalendarEvent> events;
   final DateTime selectedDate;
-  final void Function(CalendarEvent) onEventTap;
+  final void Function(CachedCalendarEvent) onEventTap;
 
   @override
   Widget build(BuildContext context) {
@@ -867,8 +864,8 @@ class _WeekView extends StatelessWidget {
   });
 
   final ThemeData theme;
-  final List<CalendarEvent> events;
-  final void Function(CalendarEvent) onEventTap;
+  final List<CachedCalendarEvent> events;
+  final void Function(CachedCalendarEvent) onEventTap;
 
   @override
   Widget build(BuildContext context) {
@@ -939,10 +936,10 @@ class _MonthView extends StatelessWidget {
   });
 
   final ThemeData theme;
-  final List<CalendarEvent> events;
+  final List<CachedCalendarEvent> events;
   final DateTime selectedDate;
   final void Function(DateTime) onDateSelected;
-  final void Function(CalendarEvent) onEventTap;
+  final void Function(CachedCalendarEvent) onEventTap;
 
   @override
   Widget build(BuildContext context) {

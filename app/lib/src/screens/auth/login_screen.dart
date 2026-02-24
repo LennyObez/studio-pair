@@ -31,8 +31,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Future<void> _handleLogin() async {
     if (!_formKey.currentState!.validate()) return;
 
-    ref.read(authProvider.notifier).clearError();
-
     final success = await ref
         .read(authProvider.notifier)
         .login(
@@ -49,13 +47,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final authState = ref.watch(authProvider);
+    final isLoading = authState.isLoading;
 
     // Show error snackbar when an error occurs
-    ref.listen<AuthState>(authProvider, (previous, next) {
-      if (next.error != null && next.error != previous?.error) {
+    ref.listen<AsyncValue<AppUser?>>(authProvider, (previous, next) {
+      if (next.hasError && next.error != previous?.error) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.error!),
+            content: Text(next.error.toString()),
             backgroundColor: theme.colorScheme.error,
           ),
         );
@@ -103,7 +102,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('email'),
                       prefixIcon: const Icon(Icons.email_outlined),
@@ -125,7 +124,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                     controller: _passwordController,
                     obscureText: _obscurePassword,
                     textInputAction: TextInputAction.done,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     onFieldSubmitted: (_) => _handleLogin(),
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('password'),
@@ -167,8 +166,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: authState.isLoading ? null : _handleLogin,
-                      child: authState.isLoading
+                      onPressed: isLoading ? null : _handleLogin,
+                      child: isLoading
                           ? const SizedBox(
                               height: 24,
                               width: 24,

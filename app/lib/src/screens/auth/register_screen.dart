@@ -34,8 +34,6 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Future<void> _handleRegister() async {
     if (!_formKey.currentState!.validate()) return;
 
-    ref.read(authProvider.notifier).clearError();
-
     final success = await ref
         .read(authProvider.notifier)
         .register(
@@ -53,13 +51,14 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final authState = ref.watch(authProvider);
+    final isLoading = authState.isLoading;
 
     // Show error snackbar when an error occurs
-    ref.listen<AuthState>(authProvider, (previous, next) {
-      if (next.error != null && next.error != previous?.error) {
+    ref.listen<AsyncValue<AppUser?>>(authProvider, (previous, next) {
+      if (next.hasError && next.error != previous?.error) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text(next.error!),
+            content: Text(next.error.toString()),
             backgroundColor: theme.colorScheme.error,
           ),
         );
@@ -106,7 +105,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     controller: _displayNameController,
                     textInputAction: TextInputAction.next,
                     textCapitalization: TextCapitalization.words,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('displayName'),
                       prefixIcon: const Icon(Icons.person_outlined),
@@ -128,7 +127,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     controller: _emailController,
                     keyboardType: TextInputType.emailAddress,
                     textInputAction: TextInputAction.next,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('email'),
                       prefixIcon: const Icon(Icons.email_outlined),
@@ -150,7 +149,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     controller: _passwordController,
                     obscureText: _obscurePassword,
                     textInputAction: TextInputAction.next,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('password'),
                       prefixIcon: const Icon(Icons.lock_outlined),
@@ -185,7 +184,7 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                     controller: _confirmPasswordController,
                     obscureText: _obscureConfirmPassword,
                     textInputAction: TextInputAction.done,
-                    enabled: !authState.isLoading,
+                    enabled: !isLoading,
                     onFieldSubmitted: (_) => _handleRegister(),
                     decoration: InputDecoration(
                       labelText: context.l10n.translate('confirmPassword'),
@@ -223,8 +222,8 @@ class _RegisterScreenState extends ConsumerState<RegisterScreen> {
                   SizedBox(
                     height: 52,
                     child: ElevatedButton(
-                      onPressed: authState.isLoading ? null : _handleRegister,
-                      child: authState.isLoading
+                      onPressed: isLoading ? null : _handleRegister,
+                      child: isLoading
                           ? const SizedBox(
                               height: 24,
                               width: 24,
