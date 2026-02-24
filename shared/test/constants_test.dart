@@ -133,12 +133,12 @@ void main() {
         );
       });
 
-      test('free tier allows 3 members', () {
-        expect(AppConstants.maxMembersFree, equals(3));
+      test('free tier allows 2 members', () {
+        expect(AppConstants.maxMembersFree, equals(2));
       });
 
-      test('premium tier allows 5 members', () {
-        expect(AppConstants.maxMembersPremium, equals(5));
+      test('premium tier allows 20 members', () {
+        expect(AppConstants.maxMembersPremium, equals(20));
       });
 
       test('free tier allows fewer spaces than premium', () {
@@ -180,8 +180,8 @@ void main() {
         expect(AppConstants.calendarConnectionsFree, equals(1));
       });
 
-      test('premium tier allows 5 calendar connections', () {
-        expect(AppConstants.calendarConnectionsPremium, equals(5));
+      test('premium tier allows 10 calendar connections', () {
+        expect(AppConstants.calendarConnectionsPremium, equals(10));
       });
     });
 
@@ -190,8 +190,8 @@ void main() {
         expect(AppConstants.aiCreditsFree, equals(10));
       });
 
-      test('premium tier provides 100 AI credits', () {
-        expect(AppConstants.aiCreditsPremium, equals(100));
+      test('premium tier provides 500 AI credits', () {
+        expect(AppConstants.aiCreditsPremium, equals(500));
       });
 
       test('premium tier provides more credits than free', () {

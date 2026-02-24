@@ -1,50 +1,20 @@
-import 'package:equatable/equatable.dart';
-import 'package:json_annotation/json_annotation.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
 
+part 'grocery_list.freezed.dart';
 part 'grocery_list.g.dart';
 
 /// Represents a grocery list within a space.
-@JsonSerializable()
-class GroceryList extends Equatable {
-  const GroceryList({
-    required this.id,
-    required this.spaceId,
-    required this.name,
-    required this.createdBy,
-    required this.createdAt,
-    required this.updatedAt,
-  });
+@freezed
+abstract class GroceryList with _$GroceryList {
+  const factory GroceryList({
+    required String id,
+    @JsonKey(name: 'space_id') required String spaceId,
+    required String name,
+    @JsonKey(name: 'created_by') required String createdBy,
+    @JsonKey(name: 'created_at') required DateTime createdAt,
+    @JsonKey(name: 'updated_at') required DateTime updatedAt,
+  }) = _GroceryList;
 
   factory GroceryList.fromJson(Map<String, dynamic> json) =>
       _$GroceryListFromJson(json);
-
-  @JsonKey(name: 'id')
-  final String id;
-
-  @JsonKey(name: 'space_id')
-  final String spaceId;
-
-  @JsonKey(name: 'name')
-  final String name;
-
-  @JsonKey(name: 'created_by')
-  final String createdBy;
-
-  @JsonKey(name: 'created_at')
-  final DateTime createdAt;
-
-  @JsonKey(name: 'updated_at')
-  final DateTime updatedAt;
-
-  Map<String, dynamic> toJson() => _$GroceryListToJson(this);
-
-  @override
-  List<Object?> get props => [
-    id,
-    spaceId,
-    name,
-    createdBy,
-    createdAt,
-    updatedAt,
-  ];
 }

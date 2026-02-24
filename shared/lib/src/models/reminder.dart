@@ -1,80 +1,26 @@
-import 'package:equatable/equatable.dart';
-import 'package:json_annotation/json_annotation.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
 
+part 'reminder.freezed.dart';
 part 'reminder.g.dart';
 
 /// Represents a reminder within a space.
-@JsonSerializable()
-class Reminder extends Equatable {
-  const Reminder({
-    required this.id,
-    required this.spaceId,
-    required this.createdBy,
-    required this.message,
-    required this.triggerAt,
-    this.recurrenceRule,
-    this.linkedModule,
-    this.linkedEntityId,
-    required this.isSent,
-    this.sentAt,
-    required this.createdAt,
-    required this.updatedAt,
-  });
+@freezed
+abstract class Reminder with _$Reminder {
+  const factory Reminder({
+    required String id,
+    @JsonKey(name: 'space_id') required String spaceId,
+    @JsonKey(name: 'created_by') required String createdBy,
+    required String message,
+    @JsonKey(name: 'trigger_at') required DateTime triggerAt,
+    @JsonKey(name: 'recurrence_rule') String? recurrenceRule,
+    @JsonKey(name: 'linked_module') String? linkedModule,
+    @JsonKey(name: 'linked_entity_id') String? linkedEntityId,
+    @JsonKey(name: 'is_sent') required bool isSent,
+    @JsonKey(name: 'sent_at') DateTime? sentAt,
+    @JsonKey(name: 'created_at') required DateTime createdAt,
+    @JsonKey(name: 'updated_at') required DateTime updatedAt,
+  }) = _Reminder;
 
   factory Reminder.fromJson(Map<String, dynamic> json) =>
       _$ReminderFromJson(json);
-
-  @JsonKey(name: 'id')
-  final String id;
-
-  @JsonKey(name: 'space_id')
-  final String spaceId;
-
-  @JsonKey(name: 'created_by')
-  final String createdBy;
-
-  @JsonKey(name: 'message')
-  final String message;
-
-  @JsonKey(name: 'trigger_at')
-  final DateTime triggerAt;
-
-  @JsonKey(name: 'recurrence_rule')
-  final String? recurrenceRule;
-
-  @JsonKey(name: 'linked_module')
-  final String? linkedModule;
-
-  @JsonKey(name: 'linked_entity_id')
-  final String? linkedEntityId;
-
-  @JsonKey(name: 'is_sent')
-  final bool isSent;
-
-  @JsonKey(name: 'sent_at')
-  final DateTime? sentAt;
-
-  @JsonKey(name: 'created_at')
-  final DateTime createdAt;
-
-  @JsonKey(name: 'updated_at')
-  final DateTime updatedAt;
-
-  Map<String, dynamic> toJson() => _$ReminderToJson(this);
-
-  @override
-  List<Object?> get props => [
-    id,
-    spaceId,
-    createdBy,
-    message,
-    triggerAt,
-    recurrenceRule,
-    linkedModule,
-    linkedEntityId,
-    isSent,
-    sentAt,
-    createdAt,
-    updatedAt,
-  ];
 }
