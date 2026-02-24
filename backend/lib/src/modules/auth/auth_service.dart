@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:crypto/crypto.dart';
 import 'package:logging/logging.dart';
 import 'package:otp/otp.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 import 'package:uuid/uuid.dart';
 
 import '../../config/app_config.dart';
@@ -12,6 +13,11 @@ import '../../utils/password_utils.dart';
 import 'auth_repository.dart';
 
 /// Custom exception for authentication errors.
+///
+/// Deprecated: Use [AppFailure] subtypes from studio_pair_shared instead.
+/// This class is retained for backward compatibility and will be removed
+/// in a future release.
+@Deprecated('Use AppFailure subtypes from studio_pair_shared instead')
 class AuthException implements Exception {
   final String message;
   final String code;
@@ -57,38 +63,28 @@ class AuthService {
   }) async {
     // Validate email format
     if (!_isValidEmail(email)) {
-      throw const AuthException(
-        'Invalid email format',
-        code: 'INVALID_EMAIL',
-        statusCode: 422,
-      );
+      throw const ValidationFailure('Invalid email format');
     }
 
     // Validate password strength
     final passwordErrors = _validatePassword(password);
     if (passwordErrors.isNotEmpty) {
-      throw AuthException(
+      throw ValidationFailure(
         'Password does not meet requirements: ${passwordErrors.join(", ")}',
-        code: 'WEAK_PASSWORD',
-        statusCode: 422,
       );
     }
 
     // Validate display name
     if (displayName.trim().isEmpty || displayName.trim().length < 2) {
-      throw const AuthException(
+      throw const ValidationFailure(
         'Display name must be at least 2 characters',
-        code: 'INVALID_DISPLAY_NAME',
-        statusCode: 422,
       );
     }
 
     // Check if email is already registered
     if (await _repo.emailExists(email)) {
-      throw const AuthException(
+      throw const ValidationFailure(
         'An account with this email already exists',
-        code: 'EMAIL_TAKEN',
-        statusCode: 409,
       );
     }
 
@@ -143,20 +139,12 @@ class AuthService {
     final user = await _repo.findByEmail(email);
 
     if (user == null) {
-      throw const AuthException(
-        'Invalid email or password',
-        code: 'INVALID_CREDENTIALS',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid email or password');
     }
 
     // Check if account is deleted
     if (user['deleted_at'] != null) {
-      throw const AuthException(
-        'This account has been deleted',
-        code: 'ACCOUNT_DELETED',
-        statusCode: 401,
-      );
+      throw const AuthFailure('This account has been deleted');
     }
 
     // Check if account is locked
@@ -164,11 +152,9 @@ class AuthService {
     if (lockedUntil != null) {
       final lockTime = DateTime.parse(lockedUntil as String);
       if (lockTime.isAfter(DateTime.now().toUtc())) {
-        throw const AuthException(
+        throw const AuthFailure(
           'Account temporarily locked due to too many failed login attempts. '
           'Please try again later.',
-          code: 'ACCOUNT_LOCKED',
-          statusCode: 429,
         );
       }
     }
@@ -177,17 +163,20 @@ class AuthService {
     final passwordHash = user['password_hash'] as String;
     if (!PasswordUtils.verifyPassword(password, passwordHash)) {
       await _repo.incrementFailedLoginAttempts(user['id'] as String);
-      throw const AuthException(
-        'Invalid email or password',
-        code: 'INVALID_CREDENTIALS',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid email or password');
     }
 
     final userId = user['id'] as String;
 
     // Reset failed attempts on successful password verification
     await _repo.resetFailedLoginAttempts(userId);
+
+    // Transparent rehash: upgrade legacy hashes to Argon2id on successful login
+    if (PasswordUtils.needsRehash(passwordHash)) {
+      final newHash = PasswordUtils.hashPassword(password);
+      await _repo.updatePassword(userId, newHash);
+      _log.info('Password hash upgraded to Argon2id for user $userId');
+    }
 
     // Check if 2FA is enabled
     if (user['two_factor_enabled'] == true) {
@@ -242,29 +231,17 @@ class AuthService {
     // Verify the refresh token JWT
     final claims = _jwtUtils.verifyToken(refreshToken);
     if (claims == null) {
-      throw const AuthException(
-        'Invalid or expired refresh token',
-        code: 'INVALID_REFRESH_TOKEN',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid or expired refresh token');
     }
 
     final tokenType = claims['type'] as String?;
     if (tokenType != 'refresh') {
-      throw const AuthException(
-        'Invalid token type',
-        code: 'INVALID_TOKEN_TYPE',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid token type');
     }
 
     final userId = claims.subject;
     if (userId == null) {
-      throw const AuthException(
-        'Invalid token',
-        code: 'INVALID_TOKEN',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid token');
     }
 
     // Find the session by refresh token hash
@@ -279,21 +256,15 @@ class AuthService {
       );
       // Revoke all sessions for this user as a precaution
       await _repo.revokeAllSessions(userId);
-      throw const AuthException(
+      throw const AuthFailure(
         'Session not found. All sessions have been revoked for security.',
-        code: 'SESSION_NOT_FOUND',
-        statusCode: 401,
       );
     }
 
     // Get user
     final user = await _repo.findById(userId);
     if (user == null || user['deleted_at'] != null) {
-      throw const AuthException(
-        'User account not found',
-        code: 'USER_NOT_FOUND',
-        statusCode: 401,
-      );
+      throw const NotFoundFailure('User account not found');
     }
 
     // Generate new tokens (token rotation)
@@ -382,10 +353,8 @@ class AuthService {
     // Validate password strength
     final passwordErrors = _validatePassword(newPassword);
     if (passwordErrors.isNotEmpty) {
-      throw AuthException(
+      throw ValidationFailure(
         'Password does not meet requirements: ${passwordErrors.join(", ")}',
-        code: 'WEAK_PASSWORD',
-        statusCode: 422,
       );
     }
 
@@ -394,11 +363,7 @@ class AuthService {
     final resetToken = await _repo.findPasswordResetToken(tokenHash);
 
     if (resetToken == null) {
-      throw const AuthException(
-        'Invalid or expired reset token',
-        code: 'INVALID_RESET_TOKEN',
-        statusCode: 400,
-      );
+      throw const ValidationFailure('Invalid or expired reset token');
     }
 
     final userId = resetToken['user_id'] as String;
@@ -426,18 +391,12 @@ class AuthService {
   Future<Map<String, dynamic>> setup2FA(String userId) async {
     final user = await _repo.findById(userId);
     if (user == null) {
-      throw const AuthException(
-        'User not found',
-        code: 'USER_NOT_FOUND',
-        statusCode: 404,
-      );
+      throw const NotFoundFailure('User not found');
     }
 
     if (user['two_factor_enabled'] == true) {
-      throw const AuthException(
+      throw const ValidationFailure(
         'Two-factor authentication is already enabled',
-        code: '2FA_ALREADY_ENABLED',
-        statusCode: 409,
       );
     }
 
@@ -477,20 +436,12 @@ class AuthService {
   }) async {
     final user = await _repo.findById(userId);
     if (user == null) {
-      throw const AuthException(
-        'User not found',
-        code: 'USER_NOT_FOUND',
-        statusCode: 404,
-      );
+      throw const NotFoundFailure('User not found');
     }
 
     final secret = user['two_factor_secret'] as String?;
     if (secret == null) {
-      throw const AuthException(
-        'Two-factor authentication is not set up',
-        code: '2FA_NOT_SETUP',
-        statusCode: 400,
-      );
+      throw const ValidationFailure('Two-factor authentication is not set up');
     }
 
     // Verify TOTP code
@@ -504,11 +455,7 @@ class AuthService {
       final backupUsed = await _repo.useBackupCode(userId, codeHash);
 
       if (!backupUsed) {
-        throw const AuthException(
-          'Invalid verification code',
-          code: 'INVALID_2FA_CODE',
-          statusCode: 401,
-        );
+        throw const AuthFailure('Invalid verification code');
       }
 
       _log.info('Backup code used for user $userId');
@@ -555,19 +502,11 @@ class AuthService {
   Future<void> disable2FA(String userId, String password) async {
     final user = await _repo.findById(userId);
     if (user == null) {
-      throw const AuthException(
-        'User not found',
-        code: 'USER_NOT_FOUND',
-        statusCode: 404,
-      );
+      throw const NotFoundFailure('User not found');
     }
 
     if (user['two_factor_enabled'] != true) {
-      throw const AuthException(
-        'Two-factor authentication is not enabled',
-        code: '2FA_NOT_ENABLED',
-        statusCode: 400,
-      );
+      throw const ValidationFailure('Two-factor authentication is not enabled');
     }
 
     // Verify password
@@ -575,11 +514,7 @@ class AuthService {
       password,
       user['password_hash'] as String,
     )) {
-      throw const AuthException(
-        'Invalid password',
-        code: 'INVALID_PASSWORD',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid password');
     }
 
     await _repo.disable2FA(userId);
@@ -599,11 +534,7 @@ class AuthService {
   Future<void> revokeSession(String userId, String sessionId) async {
     final revoked = await _repo.revokeSession(sessionId, userId);
     if (!revoked) {
-      throw const AuthException(
-        'Session not found',
-        code: 'SESSION_NOT_FOUND',
-        statusCode: 404,
-      );
+      throw const NotFoundFailure('Session not found');
     }
     _log.info('Session $sessionId revoked for user $userId');
   }
@@ -616,11 +547,7 @@ class AuthService {
   Future<void> deleteAccount(String userId, String password) async {
     final user = await _repo.findById(userId);
     if (user == null) {
-      throw const AuthException(
-        'User not found',
-        code: 'USER_NOT_FOUND',
-        statusCode: 404,
-      );
+      throw const NotFoundFailure('User not found');
     }
 
     // Verify password
@@ -628,11 +555,7 @@ class AuthService {
       password,
       user['password_hash'] as String,
     )) {
-      throw const AuthException(
-        'Invalid password',
-        code: 'INVALID_PASSWORD',
-        statusCode: 401,
-      );
+      throw const AuthFailure('Invalid password');
     }
 
     // Revoke all sessions

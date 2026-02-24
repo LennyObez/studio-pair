@@ -1,6 +1,7 @@
 import 'package:logging/logging.dart';
 import 'package:shelf/shelf.dart';
 import 'package:shelf_router/shelf_router.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 import '../../utils/request_utils.dart';
 import '../../utils/response_utils.dart';
@@ -66,8 +67,8 @@ class AuthController {
       );
 
       return createdResponse(result);
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -112,8 +113,8 @@ class AuthController {
       );
 
       return jsonResponse(result);
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -138,8 +139,8 @@ class AuthController {
       final result = await _service.refreshToken(refreshToken);
 
       return jsonResponse(result);
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -165,8 +166,8 @@ class AuthController {
       await _service.logout(userId, refreshToken);
 
       return noContentResponse();
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } catch (e, stackTrace) {
       _log.severe('Logout error', e, stackTrace);
       return internalErrorResponse();
@@ -229,8 +230,8 @@ class AuthController {
       return jsonResponse({
         'message': 'Password has been reset successfully. Please log in again.',
       });
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -248,8 +249,8 @@ class AuthController {
       final result = await _service.setup2FA(userId);
 
       return jsonResponse(result);
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } catch (e, stackTrace) {
       _log.severe('2FA setup error', e, stackTrace);
       return internalErrorResponse();
@@ -286,8 +287,8 @@ class AuthController {
       );
 
       return jsonResponse(result);
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -315,8 +316,8 @@ class AuthController {
       return jsonResponse({
         'message': 'Two-factor authentication has been disabled.',
       });
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -349,8 +350,8 @@ class AuthController {
       await _service.revokeSession(userId, sessionId);
 
       return noContentResponse();
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } catch (e, stackTrace) {
       _log.severe('Revoke session error', e, stackTrace);
       return internalErrorResponse();
@@ -376,8 +377,8 @@ class AuthController {
       await _service.deleteAccount(userId, password);
 
       return jsonResponse({'message': 'Account has been deleted.'});
-    } on AuthException catch (e) {
-      return errorResponse(e.message, statusCode: e.statusCode, code: e.code);
+    } on AppFailure catch (e) {
+      return errorResponse(e.message, statusCode: _statusCodeFor(e));
     } on FormatException catch (e) {
       return validationErrorResponse('Invalid request body: ${e.message}');
     } catch (e, stackTrace) {
@@ -385,4 +386,15 @@ class AuthController {
       return internalErrorResponse();
     }
   }
+
+  /// Maps an [AppFailure] subtype to the appropriate HTTP status code.
+  int _statusCodeFor(AppFailure failure) => switch (failure) {
+    AuthFailure() => 401,
+    ValidationFailure() => 422,
+    NotFoundFailure() => 404,
+    ServerFailure() => 500,
+    NetworkFailure() => 502,
+    StorageFailure() => 500,
+    UnknownFailure() => 500,
+  };
 }
