@@ -22,7 +22,7 @@ dependencies:
   mailer: ^6.0.1
   web_socket_channel: ^2.4.0
   http: ^1.1.0
-  mime: ^1.0.4
+  mime: ^2.0.0
   otp: ^3.1.4
   shelf_web_socket: ^1.0.4
 
