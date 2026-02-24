@@ -40,43 +40,35 @@ class AppUser {
   }
 }
 
-/// Authentication state.
-class AuthState {
-  const AuthState({this.user, this.isLoading = false, this.error});
+/// Auth notifier managing login, logout, and registration.
+class AuthNotifier extends AsyncNotifier<AppUser?> {
+  AuthApi get _api => ref.read(authApiProvider);
+  SecureStorageService get _storage => ref.read(secureStorageProvider);
 
-  final AppUser? user;
-  final bool isLoading;
-  final String? error;
+  @override
+  Future<AppUser?> build() async {
+    final api = ref.watch(authApiProvider);
+    final storage = ref.watch(secureStorageProvider);
 
-  bool get isAuthenticated => user != null;
+    // Check for existing session
+    final hasTokens = await storage.hasTokens();
+    if (!hasTokens) return null;
 
-  AuthState copyWith({
-    AppUser? user,
-    bool? isLoading,
-    String? error,
-    bool clearUser = false,
-    bool clearError = false,
-  }) {
-    return AuthState(
-      user: clearUser ? null : (user ?? this.user),
-      isLoading: isLoading ?? this.isLoading,
-      error: clearError ? null : (error ?? this.error),
-    );
+    try {
+      final response = await api.getProfile();
+      final userData = response.data as Map<String, dynamic>;
+      return AppUser.fromJson(userData);
+    } catch (_) {
+      await storage.clearAll();
+      return null;
+    }
   }
-}
-
-/// Auth state notifier managing login, logout, and registration.
-class AuthNotifier extends StateNotifier<AuthState> {
-  AuthNotifier(this._api, this._storage) : super(const AuthState());
-
-  final AuthApi _api;
-  final SecureStorageService _storage;
 
   /// Login with email and password.
   Future<bool> login({required String email, required String password}) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       final response = await _api.login(email: email, password: password);
       final data = response.data as Map<String, dynamic>;
 
@@ -85,20 +77,18 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final refreshToken =
           data['refreshToken'] as String? ?? data['refresh_token'] as String;
       final userData = data['user'] as Map<String, dynamic>;
-      final user = AppUser.fromJson(userData);
 
       await _storage.saveTokens(
         accessToken: accessToken,
         refreshToken: refreshToken,
       );
-      await _storage.saveUserId(user.id);
 
-      state = state.copyWith(user: user, isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      final user = AppUser.fromJson(userData);
+      await _storage.saveUserId(user.id);
+      return user;
+    });
+
+    return !state.hasError;
   }
 
   /// Register a new account.
@@ -107,9 +97,9 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required String email,
     required String password,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       final response = await _api.register(
         displayName: displayName,
         email: email,
@@ -122,87 +112,59 @@ class AuthNotifier extends StateNotifier<AuthState> {
       final refreshToken =
           data['refreshToken'] as String? ?? data['refresh_token'] as String;
       final userData = data['user'] as Map<String, dynamic>;
-      final user = AppUser.fromJson(userData);
 
       await _storage.saveTokens(
         accessToken: accessToken,
         refreshToken: refreshToken,
       );
-      await _storage.saveUserId(user.id);
 
-      state = state.copyWith(user: user, isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      final user = AppUser.fromJson(userData);
+      await _storage.saveUserId(user.id);
+      return user;
+    });
+
+    return !state.hasError;
   }
 
   /// Logout the current user.
   Future<void> logout() async {
-    state = state.copyWith(isLoading: true);
-
     try {
       await _api.logout();
     } finally {
       await _storage.clearAll();
-      state = const AuthState();
+      state = const AsyncData(null);
     }
   }
 
   /// Update user profile.
   Future<void> updateProfile({String? displayName, String? avatarUrl}) async {
-    if (state.user == null) return;
+    final currentUser = state.valueOrNull;
+    if (currentUser == null) return;
 
-    try {
+    state = await AsyncValue.guard(() async {
       final response = await _api.updateProfile(
         displayName: displayName,
         avatarUrl: avatarUrl,
       );
       final userData = response.data as Map<String, dynamic>;
-      final updatedUser = AppUser.fromJson(userData);
-
-      state = state.copyWith(user: updatedUser);
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
-    }
-  }
-
-  /// Check if there is an existing session and restore it.
-  Future<bool> checkSession() async {
-    final hasTokens = await _storage.hasTokens();
-    if (!hasTokens) return false;
-
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      final response = await _api.getProfile();
-      final userData = response.data as Map<String, dynamic>;
-      final user = AppUser.fromJson(userData);
-
-      state = state.copyWith(user: user, isLoading: false);
-      return true;
-    } catch (e) {
-      await _storage.clearAll();
-      state = state.copyWith(isLoading: false, clearUser: true);
-      return false;
-    }
+      return AppUser.fromJson(userData);
+    });
   }
 
   /// Request a password reset email.
   /// Always returns true to prevent email enumeration.
   Future<bool> forgotPassword({required String email}) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    final previousState = state;
+    state = const AsyncLoading();
 
     try {
       await _api.forgotPassword(email: email);
-      state = state.copyWith(isLoading: false);
-      return true;
-    } catch (e) {
+    } catch (_) {
       // Don't expose errors to prevent email enumeration
-      state = state.copyWith(isLoading: false);
-      return true;
     }
+
+    state = previousState;
+    return true;
   }
 
   /// Change the current user's password.
@@ -210,72 +172,59 @@ class AuthNotifier extends StateNotifier<AuthState> {
     required String currentPassword,
     required String newPassword,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    final currentUser = state.valueOrNull;
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       await _api.changePassword(
         currentPassword: currentPassword,
         newPassword: newPassword,
       );
-      state = state.copyWith(isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return currentUser;
+    });
+
+    return !state.hasError;
   }
 
   /// Delete the current user's account.
   Future<bool> deleteAccount({required String password}) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       await _api.deleteAccount(password: password);
       await _storage.clearAll();
-      state = const AuthState();
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return null;
+    });
+
+    return !state.hasError;
   }
 
   /// Dev-only: bypass API and log in with a dummy user.
   void devLogin() {
     assert(() {
-      state = state.copyWith(
-        user: const AppUser(
+      state = const AsyncData(
+        AppUser(
           id: 'dev-user-00000000-0000-0000-0000-000000000001',
           email: 'dev@studiopair.test',
           displayName: 'Dev User',
         ),
-        isLoading: false,
-        clearError: true,
       );
       return true;
     }());
   }
-
-  /// Clear any error state.
-  void clearError() {
-    state = state.copyWith(clearError: true);
-  }
 }
 
 /// Auth state provider.
-final authProvider = StateNotifierProvider<AuthNotifier, AuthState>((ref) {
-  return AuthNotifier(
-    ref.watch(authApiProvider),
-    ref.watch(secureStorageProvider),
-  );
-});
+final authProvider = AsyncNotifierProvider<AuthNotifier, AppUser?>(
+  AuthNotifier.new,
+);
 
 /// Convenience provider for the current user.
 final currentUserProvider = Provider<AppUser?>((ref) {
-  return ref.watch(authProvider).user;
+  return ref.watch(authProvider).valueOrNull;
 });
 
 /// Convenience provider for authentication status.
 final isAuthenticatedProvider = Provider<bool>((ref) {
-  return ref.watch(authProvider).isAuthenticated;
+  return ref.watch(authProvider).valueOrNull != null;
 });

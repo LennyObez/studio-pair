@@ -44,49 +44,45 @@ class SyncState {
 }
 
 /// Sync state notifier wrapping the SyncService.
-class SyncNotifier extends StateNotifier<SyncState> {
-  SyncNotifier({SyncService? syncService})
-    : _syncService = syncService,
-      super(const SyncState());
-
-  final SyncService? _syncService;
+class SyncNotifier extends AsyncNotifier<SyncState> {
   StreamSubscription<SyncServiceStatus>? _statusSubscription;
 
-  /// Initialize and start listening to sync status changes.
-  void initialize() {
-    if (_syncService == null) return;
+  @override
+  Future<SyncState> build() async {
+    final syncService = ref.watch(syncServiceProvider);
 
-    _statusSubscription = _syncService.statusStream.listen((status) {
-      state = state.copyWith(
-        status: status,
-        lastSyncTime: status == SyncServiceStatus.synced
-            ? DateTime.now()
-            : null,
+    _statusSubscription = syncService.statusStream.listen((status) {
+      state = AsyncData(
+        SyncState(
+          status: status,
+          lastSyncTime: status == SyncServiceStatus.synced
+              ? DateTime.now()
+              : state.valueOrNull?.lastSyncTime,
+        ),
       );
     });
+
+    ref.onDispose(() {
+      _statusSubscription?.cancel();
+    });
+
+    return const SyncState();
   }
 
   /// Force a manual sync.
   Future<void> forceSync() async {
-    await _syncService?.forceSync();
-  }
-
-  @override
-  void dispose() {
-    _statusSubscription?.cancel();
-    _syncService?.dispose();
-    super.dispose();
+    final syncService = ref.read(syncServiceProvider);
+    await syncService.forceSync();
   }
 }
 
 /// Sync state provider.
-final syncProvider = StateNotifierProvider<SyncNotifier, SyncState>((ref) {
-  final notifier = SyncNotifier(syncService: ref.watch(syncServiceProvider));
-  notifier.initialize();
-  return notifier;
-});
+final syncProvider = AsyncNotifierProvider<SyncNotifier, SyncState>(
+  SyncNotifier.new,
+);
 
 /// Convenience provider for sync status.
 final syncStatusProvider = Provider<SyncServiceStatus>((ref) {
-  return ref.watch(syncProvider).status;
+  return ref.watch(syncProvider).valueOrNull?.status ??
+      SyncServiceStatus.synced;
 });

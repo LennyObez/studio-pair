@@ -2,6 +2,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/providers/service_providers.dart';
 import 'package:studio_pair/src/services/api/health_api.dart';
 import 'package:studio_pair/src/services/health/health_bridge_service.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Health profile model with body measurements.
 class HealthProfile {
@@ -78,74 +79,58 @@ class HealthMeasurement {
   final String? source;
 }
 
-/// Health state.
-class HealthState {
-  const HealthState({
-    this.profile,
-    this.measurements = const [],
-    this.isLoading = false,
-    this.error,
-  });
+/// Composite data class for health state.
+class HealthData {
+  const HealthData({this.profile, this.measurements = const []});
 
   final HealthProfile? profile;
   final List<HealthMeasurement> measurements;
-  final bool isLoading;
-  final String? error;
 
-  HealthState copyWith({
+  HealthData copyWith({
     HealthProfile? profile,
     List<HealthMeasurement>? measurements,
-    bool? isLoading,
-    String? error,
-    bool clearError = false,
     bool clearProfile = false,
   }) {
-    return HealthState(
+    return HealthData(
       profile: clearProfile ? null : (profile ?? this.profile),
       measurements: measurements ?? this.measurements,
-      isLoading: isLoading ?? this.isLoading,
-      error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
-/// Health state notifier managing health profiles and measurements.
-class HealthNotifier extends StateNotifier<HealthState> {
-  HealthNotifier(this._api) : super(const HealthState());
+// ── Async notifier ──────────────────────────────────────────────────────
 
-  final HealthApi _api;
+/// Health notifier managing health profiles and measurements.
+class HealthNotifier extends AsyncNotifier<HealthData> {
+  HealthApi get _api => ref.read(healthApiProvider);
   HealthBridgeService? _bridgeService;
+
+  @override
+  Future<HealthData> build() async => const HealthData();
 
   /// Load the user's health profile.
   Future<void> loadProfile() async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const HealthData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.getProfile();
       final data = response.data as Map<String, dynamic>;
       final profile = HealthProfile.fromJson(data);
-
-      state = state.copyWith(profile: profile, isLoading: false);
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-    }
+      return previous.copyWith(profile: profile);
+    });
   }
 
   /// Update the health profile.
   Future<bool> updateProfile(Map<String, dynamic> data) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const HealthData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.updateProfile(data);
       final responseData = response.data as Map<String, dynamic>;
       final updatedProfile = HealthProfile.fromJson(responseData);
-
-      state = state.copyWith(profile: updatedProfile, isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return previous.copyWith(profile: updatedProfile);
+    });
+    return !state.hasError;
   }
 
   /// Load health measurements, optionally filtered by type and date range.
@@ -154,9 +139,9 @@ class HealthNotifier extends StateNotifier<HealthState> {
     String? startDate,
     String? endDate,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const HealthData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.getMeasurements(
         type: type,
         startDate: startDate,
@@ -164,11 +149,8 @@ class HealthNotifier extends StateNotifier<HealthState> {
       );
       final items = parseList(response.data);
       final measurements = items.map(HealthMeasurement.fromJson).toList();
-
-      state = state.copyWith(measurements: measurements, isLoading: false);
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-    }
+      return previous.copyWith(measurements: measurements);
+    });
   }
 
   /// Add a new health measurement.
@@ -178,9 +160,9 @@ class HealthNotifier extends StateNotifier<HealthState> {
     required String unit,
     String? source,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const HealthData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.addMeasurement(
         type: type,
         value: value,
@@ -192,34 +174,26 @@ class HealthNotifier extends StateNotifier<HealthState> {
         response.data as Map<String, dynamic>,
       );
 
-      state = state.copyWith(
-        measurements: [newMeasurement, ...state.measurements],
-        isLoading: false,
+      return previous.copyWith(
+        measurements: [newMeasurement, ...previous.measurements],
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
   /// Sync health data from the device's native health platform
   /// (HealthKit / Google Fit / Samsung Health).
   Future<bool> syncFromDevice() async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const HealthData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       _bridgeService ??= HealthBridgeService();
       final bridge = _bridgeService!;
 
       // Request permissions
       final hasPermission = await bridge.requestPermissions();
       if (!hasPermission) {
-        state = state.copyWith(
-          isLoading: false,
-          error: 'Health data permission denied',
-        );
-        return false;
+        throw const ValidationFailure('Health data permission denied');
       }
 
       // Fetch last 7 days of data
@@ -236,33 +210,28 @@ class HealthNotifier extends StateNotifier<HealthState> {
       }
 
       // Reload measurements from API
-      await loadMeasurements();
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
-  }
-
-  /// Clear any error state.
-  void clearError() {
-    state = state.copyWith(clearError: true);
+      final response = await _api.getMeasurements();
+      final items = parseList(response.data);
+      final measurements = items.map(HealthMeasurement.fromJson).toList();
+      return previous.copyWith(measurements: measurements);
+    });
+    return !state.hasError;
   }
 }
 
-/// Health state provider.
-final healthProvider = StateNotifierProvider<HealthNotifier, HealthState>((
-  ref,
-) {
-  return HealthNotifier(ref.watch(healthApiProvider));
-});
+/// Health async provider.
+final healthProvider = AsyncNotifierProvider<HealthNotifier, HealthData>(
+  HealthNotifier.new,
+);
+
+// ── Convenience providers ───────────────────────────────────────────────
 
 /// Convenience provider for the health profile.
 final healthProfileProvider = Provider<HealthProfile?>((ref) {
-  return ref.watch(healthProvider).profile;
+  return ref.watch(healthProvider).valueOrNull?.profile;
 });
 
 /// Convenience provider for health measurements.
 final healthMeasurementsProvider = Provider<List<HealthMeasurement>>((ref) {
-  return ref.watch(healthProvider).measurements;
+  return ref.watch(healthProvider).valueOrNull?.measurements ?? [];
 });

@@ -6,46 +6,42 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 /// Connectivity state: online or offline.
 enum ConnectivityStatus { online, offline }
 
-/// Connectivity state notifier that tracks network availability.
-class ConnectivityNotifier extends StateNotifier<ConnectivityStatus> {
-  ConnectivityNotifier({Connectivity? connectivity})
-    : _connectivity = connectivity ?? Connectivity(),
-      super(ConnectivityStatus.online) {
-    _init();
-  }
-
-  final Connectivity _connectivity;
-  StreamSubscription<ConnectivityResult>? _subscription;
-
-  void _init() {
-    // Check initial connectivity
-    _connectivity.checkConnectivity().then(_updateFromResult);
-
-    // Listen for changes
-    _subscription = _connectivity.onConnectivityChanged.listen(
-      _updateFromResult,
-    );
-  }
-
-  void _updateFromResult(ConnectivityResult result) {
-    final isOnline = result != ConnectivityResult.none;
-    state = isOnline ? ConnectivityStatus.online : ConnectivityStatus.offline;
-  }
+/// Connectivity notifier using AsyncNotifier pattern.
+class ConnectivityNotifier extends AsyncNotifier<ConnectivityStatus> {
+  StreamSubscription<List<ConnectivityResult>>? _subscription;
 
   @override
-  void dispose() {
-    _subscription?.cancel();
-    super.dispose();
+  Future<ConnectivityStatus> build() async {
+    final connectivity = Connectivity();
+
+    // Check initial connectivity
+    final results = await connectivity.checkConnectivity();
+    final initial = _statusFromResults(results);
+
+    // Listen for changes
+    _subscription = connectivity.onConnectivityChanged.listen((results) {
+      state = AsyncData(_statusFromResults(results));
+    });
+
+    ref.onDispose(() => _subscription?.cancel());
+
+    return initial;
+  }
+
+  ConnectivityStatus _statusFromResults(List<ConnectivityResult> results) {
+    final isOnline = results.any((r) => r != ConnectivityResult.none);
+    return isOnline ? ConnectivityStatus.online : ConnectivityStatus.offline;
   }
 }
 
 /// Connectivity status provider.
 final connectivityProvider =
-    StateNotifierProvider<ConnectivityNotifier, ConnectivityStatus>((ref) {
-      return ConnectivityNotifier();
-    });
+    AsyncNotifierProvider<ConnectivityNotifier, ConnectivityStatus>(
+      ConnectivityNotifier.new,
+    );
 
 /// Convenience provider for checking if online.
 final isOnlineProvider = Provider<bool>((ref) {
-  return ref.watch(connectivityProvider) == ConnectivityStatus.online;
+  return ref.watch(connectivityProvider).valueOrNull ==
+      ConnectivityStatus.online;
 });

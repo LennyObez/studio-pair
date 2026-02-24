@@ -55,7 +55,7 @@ void main() async {
 
   // Restore existing session from stored tokens (if any).
   try {
-    await container.read(authProvider.notifier).checkSession();
+    await container.read(authProvider.future);
   } catch (e) {
     debugPrint('[Auth] Session restore skipped: $e');
   }

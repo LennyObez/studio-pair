@@ -1,190 +1,56 @@
-import 'package:drift/drift.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/providers/service_providers.dart';
-import 'package:studio_pair/src/services/api/calendar_api.dart';
+import 'package:studio_pair/src/providers/space_provider.dart';
 import 'package:studio_pair/src/services/database/app_database.dart';
-import 'package:studio_pair/src/services/database/daos/calendar_dao.dart';
 
-/// Calendar event model.
-class CalendarEvent {
-  const CalendarEvent({
-    required this.id,
-    required this.title,
-    this.location,
-    required this.eventType,
-    required this.allDay,
-    required this.startAt,
-    required this.endAt,
-    this.recurrenceRule,
-    this.sourceModule,
-    this.sourceEntityId,
-    this.createdBy,
-  });
+// ── View state providers ────────────────────────────────────────────────
 
-  factory CalendarEvent.fromJson(Map<String, dynamic> json) {
-    return CalendarEvent(
-      id: json['id'] as String,
-      title: json['title'] as String,
-      location: json['location'] as String?,
-      eventType: json['event_type'] as String? ?? 'personal',
-      allDay: json['all_day'] as bool? ?? false,
-      startAt: DateTime.parse(json['start_at'] as String),
-      endAt: DateTime.parse(json['end_at'] as String),
-      recurrenceRule: json['recurrence_rule'] as String?,
-      sourceModule: json['source_module'] as String?,
-      sourceEntityId: json['source_entity_id'] as String?,
-      createdBy: json['created_by'] as String?,
+/// Currently selected date on the calendar.
+final selectedDateProvider = StateProvider<DateTime>((ref) => DateTime.now());
+
+/// Calendar view mode (day, week, month).
+final calendarViewModeProvider = StateProvider<String>((ref) => 'month');
+
+// ── Async notifier ──────────────────────────────────────────────────────
+
+/// Calendar notifier backed by the [CalendarRepository].
+///
+/// The [build] method fetches events for the current month (or selected date
+/// range) from the repository (API + cache) whenever the current space or
+/// selected date changes.
+class CalendarNotifier
+    extends AutoDisposeAsyncNotifier<List<CachedCalendarEvent>> {
+  @override
+  Future<List<CachedCalendarEvent>> build() async {
+    final repo = ref.watch(calendarRepositoryProvider);
+    final spaceId = ref.watch(currentSpaceProvider)?.id;
+    if (spaceId == null) return [];
+
+    final selectedDate = ref.watch(selectedDateProvider);
+    final start = DateTime(selectedDate.year, selectedDate.month);
+    final end = DateTime(selectedDate.year, selectedDate.month + 1);
+
+    return repo.getEvents(
+      spaceId,
+      start: start.toIso8601String(),
+      end: end.toIso8601String(),
     );
   }
 
-  final String id;
-  final String title;
-  final String? location;
-  final String eventType;
-  final bool allDay;
-  final DateTime startAt;
-  final DateTime endAt;
-  final String? recurrenceRule;
-  final String? sourceModule;
-  final String? sourceEntityId;
-  final String? createdBy;
-}
-
-/// Calendar state.
-class CalendarState {
-  const CalendarState({
-    this.events = const [],
-    this.selectedDate,
-    this.viewMode = 'month',
-    this.isLoading = false,
-    this.isCached = false,
-    this.error,
-  });
-
-  final List<CalendarEvent> events;
-  final DateTime? selectedDate;
-  final String viewMode;
-  final bool isLoading;
-  final bool isCached;
-  final String? error;
-
-  CalendarState copyWith({
-    List<CalendarEvent>? events,
-    DateTime? selectedDate,
-    String? viewMode,
-    bool? isLoading,
-    bool? isCached,
-    String? error,
-    bool clearError = false,
-  }) {
-    return CalendarState(
-      events: events ?? this.events,
-      selectedDate: selectedDate ?? this.selectedDate,
-      viewMode: viewMode ?? this.viewMode,
-      isLoading: isLoading ?? this.isLoading,
-      isCached: isCached ?? this.isCached,
-      error: clearError ? null : (error ?? this.error),
-    );
-  }
-}
-
-/// Calendar state notifier managing events and calendar view.
-class CalendarNotifier extends StateNotifier<CalendarState> {
-  CalendarNotifier(this._api, this._dao)
-    : super(CalendarState(selectedDate: DateTime.now()));
-
-  final CalendarApi _api;
-  final CalendarDao _dao;
-
-  /// Load events for a space within a date range.
+  /// Load events for an explicit date range.
   Future<void> loadEvents(String spaceId, DateTime start, DateTime end) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    // 1. Load from cache first
-    try {
-      final cached = await _dao.getEventsByDateRange(spaceId, start, end).first;
-      if (cached.isNotEmpty) {
-        final events = cached
-            .map(
-              (c) => CalendarEvent(
-                id: c.id,
-                title: c.title,
-                location: c.location,
-                eventType: c.eventType,
-                allDay: c.allDay,
-                startAt: c.startAt,
-                endAt: c.endAt,
-                recurrenceRule: c.recurrenceRule,
-                sourceModule: c.sourceModule,
-                sourceEntityId: c.sourceEntityId,
-                createdBy: c.createdBy,
-              ),
-            )
-            .toList();
-        state = state.copyWith(
-          events: events,
-          isLoading: false,
-          isCached: true,
-        );
-      }
-    } catch (_) {
-      // Cache read failed, continue to API
-    }
-
-    // 2. Try API in background
-    try {
-      final response = await _api.getEvents(
+    final repo = ref.read(calendarRepositoryProvider);
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(
+      () => repo.getEvents(
         spaceId,
         start: start.toIso8601String(),
         end: end.toIso8601String(),
-      );
-      final jsonList = parseList(response.data);
-      final events = jsonList.map(CalendarEvent.fromJson).toList();
-
-      // Upsert into cache
-      for (final item in events) {
-        await _dao.upsertEvent(
-          CachedCalendarEventsCompanion(
-            id: Value(item.id),
-            spaceId: Value(spaceId),
-            createdBy: Value(item.createdBy ?? ''),
-            title: Value(item.title),
-            location: Value(item.location),
-            eventType: Value(item.eventType),
-            allDay: Value(item.allDay),
-            startAt: Value(item.startAt),
-            endAt: Value(item.endAt),
-            recurrenceRule: Value(item.recurrenceRule),
-            sourceModule: Value(item.sourceModule),
-            sourceEntityId: Value(item.sourceEntityId),
-            createdAt: Value(DateTime.now()),
-            updatedAt: Value(DateTime.now()),
-            syncedAt: Value(DateTime.now()),
-          ),
-        );
-      }
-
-      state = state.copyWith(events: events, isLoading: false, isCached: false);
-    } catch (e) {
-      if (state.events.isEmpty) {
-        state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      } else {
-        state = state.copyWith(isLoading: false);
-      }
-    }
+      ),
+    );
   }
 
-  /// Select a date on the calendar.
-  void selectDate(DateTime date) {
-    state = state.copyWith(selectedDate: date);
-  }
-
-  /// Set the calendar view mode (day, week, month).
-  void setViewMode(String mode) {
-    state = state.copyWith(viewMode: mode);
-  }
-
-  /// Create a new calendar event.
+  /// Create a new calendar event and refresh the list.
   Future<bool> createEvent(
     String spaceId, {
     required String title,
@@ -195,10 +61,10 @@ class CalendarNotifier extends StateNotifier<CalendarState> {
     required DateTime endAt,
     String? recurrenceRule,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      final response = await _api.createEvent(
+    final repo = ref.read(calendarRepositoryProvider);
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      await repo.createEvent(
         spaceId,
         title: title,
         location: location,
@@ -208,88 +74,70 @@ class CalendarNotifier extends StateNotifier<CalendarState> {
         endAt: endAt.toIso8601String(),
         recurrenceRule: recurrenceRule,
       );
-      final newEvent = CalendarEvent.fromJson(
-        response.data as Map<String, dynamic>,
+      // Re-fetch the current month's events.
+      final sel = ref.read(selectedDateProvider);
+      final monthStart = DateTime(sel.year, sel.month);
+      final monthEnd = DateTime(sel.year, sel.month + 1);
+      return repo.getEvents(
+        spaceId,
+        start: monthStart.toIso8601String(),
+        end: monthEnd.toIso8601String(),
       );
-
-      state = state.copyWith(
-        events: [...state.events, newEvent],
-        isLoading: false,
-      );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
-  /// Update an existing calendar event.
+  /// Update a calendar event and refresh the list.
   Future<bool> updateEvent(
     String spaceId,
     String eventId,
     Map<String, dynamic> data,
   ) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      final response = await _api.updateEvent(spaceId, eventId, data);
-      final updatedEvent = CalendarEvent.fromJson(
-        response.data as Map<String, dynamic>,
+    final repo = ref.read(calendarRepositoryProvider);
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      await repo.updateEvent(spaceId, eventId, data);
+      final sel = ref.read(selectedDateProvider);
+      final monthStart = DateTime(sel.year, sel.month);
+      final monthEnd = DateTime(sel.year, sel.month + 1);
+      return repo.getEvents(
+        spaceId,
+        start: monthStart.toIso8601String(),
+        end: monthEnd.toIso8601String(),
       );
-
-      final updatedEvents = state.events.map((event) {
-        if (event.id == eventId) return updatedEvent;
-        return event;
-      }).toList();
-
-      state = state.copyWith(events: updatedEvents, isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
-  /// Delete a calendar event.
+  /// Delete a calendar event and refresh the list.
   Future<bool> deleteEvent(String spaceId, String eventId) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
-      await _api.deleteEvent(spaceId, eventId);
-
-      state = state.copyWith(
-        events: state.events.where((e) => e.id != eventId).toList(),
-        isLoading: false,
+    final repo = ref.read(calendarRepositoryProvider);
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
+      await repo.deleteEvent(spaceId, eventId);
+      final sel = ref.read(selectedDateProvider);
+      final monthStart = DateTime(sel.year, sel.month);
+      final monthEnd = DateTime(sel.year, sel.month + 1);
+      return repo.getEvents(
+        spaceId,
+        start: monthStart.toIso8601String(),
+        end: monthEnd.toIso8601String(),
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
-  }
-
-  /// Clear any error state.
-  void clearError() {
-    state = state.copyWith(clearError: true);
+    });
+    return !state.hasError;
   }
 }
 
-/// Calendar state provider.
-final calendarProvider = StateNotifierProvider<CalendarNotifier, CalendarState>(
-  (ref) {
-    return CalendarNotifier(
-      ref.watch(calendarApiProvider),
-      ref.watch(calendarDaoProvider),
-    );
-  },
-);
+/// Calendar async provider.
+final calendarProvider =
+    AsyncNotifierProvider.autoDispose<
+      CalendarNotifier,
+      List<CachedCalendarEvent>
+    >(CalendarNotifier.new);
 
-/// Convenience provider for calendar events.
-final calendarEventsProvider = Provider<List<CalendarEvent>>((ref) {
-  return ref.watch(calendarProvider).events;
-});
+// ── Convenience providers ───────────────────────────────────────────────
 
-/// Convenience provider for the selected date.
-final selectedDateProvider = Provider<DateTime?>((ref) {
-  return ref.watch(calendarProvider).selectedDate;
+/// Convenience provider for the current list of calendar events.
+final calendarEventsProvider = Provider<List<CachedCalendarEvent>>((ref) {
+  return ref.watch(calendarProvider).valueOrNull ?? [];
 });

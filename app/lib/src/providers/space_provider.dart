@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/providers/service_providers.dart';
 import 'package:studio_pair/src/services/api/spaces_api.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Space model.
 class Space {
@@ -62,75 +63,83 @@ class SpaceMember {
   final String? avatarUrl;
 }
 
-/// Space state.
-class SpaceState {
-  const SpaceState({
+/// Composite state for space data.
+class SpaceData {
+  const SpaceData({
     this.currentSpace,
     this.spaces = const [],
     this.members = const [],
-    this.isLoading = false,
-    this.error,
   });
 
   final Space? currentSpace;
   final List<Space> spaces;
   final List<SpaceMember> members;
-  final bool isLoading;
-  final String? error;
 
-  SpaceState copyWith({
+  SpaceData copyWith({
     Space? currentSpace,
     List<Space>? spaces,
     List<SpaceMember>? members,
-    bool? isLoading,
-    String? error,
-    bool clearError = false,
     bool clearCurrentSpace = false,
   }) {
-    return SpaceState(
+    return SpaceData(
       currentSpace: clearCurrentSpace
           ? null
           : (currentSpace ?? this.currentSpace),
       spaces: spaces ?? this.spaces,
       members: members ?? this.members,
-      isLoading: isLoading ?? this.isLoading,
-      error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
 /// Space state notifier.
-class SpaceNotifier extends StateNotifier<SpaceState> {
-  SpaceNotifier(this._api) : super(const SpaceState());
+class SpaceNotifier extends AsyncNotifier<SpaceData> {
+  SpacesApi get _api => ref.read(spacesApiProvider);
 
-  final SpacesApi _api;
-
-  /// Load spaces for the current user.
-  Future<void> loadSpaces() async {
-    state = state.copyWith(isLoading: true, clearError: true);
+  @override
+  Future<SpaceData> build() async {
+    final api = ref.watch(spacesApiProvider);
 
     try {
+      final response = await api.listMySpaces();
+      final jsonList = parseList(response.data);
+      final spaces = jsonList.map(Space.fromJson).toList();
+
+      return SpaceData(
+        spaces: spaces,
+        currentSpace: spaces.isNotEmpty ? spaces.first : null,
+      );
+    } catch (e) {
+      if (e is AppFailure) rethrow;
+      throw UnknownFailure('Failed to load spaces: $e');
+    }
+  }
+
+  /// Load spaces for the current user (triggers a rebuild).
+  Future<void> loadSpaces() async {
+    state = const AsyncLoading();
+
+    state = await AsyncValue.guard(() async {
       final response = await _api.listMySpaces();
       final jsonList = parseList(response.data);
       final spaces = jsonList.map(Space.fromJson).toList();
 
-      state = state.copyWith(
+      return SpaceData(
         spaces: spaces,
         currentSpace: spaces.isNotEmpty ? spaces.first : null,
-        isLoading: false,
       );
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-    }
+    });
   }
 
   /// Switch to a different space.
   void switchSpace(String spaceId) {
-    final space = state.spaces.firstWhere(
+    final currentData = state.valueOrNull;
+    if (currentData == null) return;
+
+    final space = currentData.spaces.firstWhere(
       (s) => s.id == spaceId,
-      orElse: () => state.spaces.first,
+      orElse: () => currentData.spaces.first,
     );
-    state = state.copyWith(currentSpace: space);
+    state = AsyncData(currentData.copyWith(currentSpace: space));
   }
 
   /// Create a new space and set it as the current space.
@@ -140,9 +149,10 @@ class SpaceNotifier extends StateNotifier<SpaceState> {
     String? description,
     List<String>? enabledModules,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    final previousData = state.valueOrNull ?? const SpaceData();
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       final response = await _api.createSpace(
         name: name,
         type: type,
@@ -152,65 +162,59 @@ class SpaceNotifier extends StateNotifier<SpaceState> {
       final data = response.data as Map<String, dynamic>;
       final space = Space.fromJson(data);
 
-      state = state.copyWith(
-        spaces: [...state.spaces, space],
+      return previousData.copyWith(
+        spaces: [...previousData.spaces, space],
         currentSpace: space,
-        isLoading: false,
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+
+    return !state.hasError;
   }
 
   /// Join an existing space using an invite code.
   Future<bool> joinSpace(String inviteCode) async {
-    state = state.copyWith(isLoading: true, clearError: true);
+    final previousData = state.valueOrNull ?? const SpaceData();
+    state = const AsyncLoading();
 
-    try {
+    state = await AsyncValue.guard(() async {
       final response = await _api.join(inviteCode: inviteCode);
       final data = response.data as Map<String, dynamic>;
       final space = Space.fromJson(data);
 
-      state = state.copyWith(
-        spaces: [...state.spaces, space],
+      return previousData.copyWith(
+        spaces: [...previousData.spaces, space],
         currentSpace: space,
-        isLoading: false,
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+
+    return !state.hasError;
   }
 
   /// Invite a member to the current space by email.
   Future<bool> inviteMember(String email) async {
-    if (state.currentSpace == null) return false;
+    final currentData = state.valueOrNull;
+    if (currentData?.currentSpace == null) return false;
 
     try {
-      await _api.invite(state.currentSpace!.id, email: email);
+      await _api.invite(currentData!.currentSpace!.id, email: email);
       return true;
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
+    } catch (_) {
       return false;
     }
   }
 
   /// Load members of the current space.
   Future<void> loadMembers() async {
-    if (state.currentSpace == null) return;
+    final currentData = state.valueOrNull;
+    if (currentData?.currentSpace == null) return;
 
-    try {
-      final response = await _api.listMembers(state.currentSpace!.id);
+    state = await AsyncValue.guard(() async {
+      final response = await _api.listMembers(currentData!.currentSpace!.id);
       final jsonList = parseList(response.data);
       final members = jsonList.map(SpaceMember.fromJson).toList();
 
-      state = state.copyWith(members: members);
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
-    }
+      return currentData.copyWith(members: members);
+    });
   }
 
   /// Dev-only: set a dummy space so all screens work without a backend.
@@ -252,11 +256,12 @@ class SpaceNotifier extends StateNotifier<SpaceState> {
         displayName: 'Partner',
         role: 'member',
       );
-      state = state.copyWith(
-        spaces: [devSpace],
-        currentSpace: devSpace,
-        members: [devMember, partnerMember],
-        isLoading: false,
+      state = const AsyncData(
+        SpaceData(
+          spaces: [devSpace],
+          currentSpace: devSpace,
+          members: [devMember, partnerMember],
+        ),
       );
       return true;
     }());
@@ -264,16 +269,16 @@ class SpaceNotifier extends StateNotifier<SpaceState> {
 }
 
 /// Space state provider.
-final spaceProvider = StateNotifierProvider<SpaceNotifier, SpaceState>((ref) {
-  return SpaceNotifier(ref.watch(spacesApiProvider));
-});
+final spaceProvider = AsyncNotifierProvider<SpaceNotifier, SpaceData>(
+  SpaceNotifier.new,
+);
 
 /// Convenience provider for the current space.
 final currentSpaceProvider = Provider<Space?>((ref) {
-  return ref.watch(spaceProvider).currentSpace;
+  return ref.watch(spaceProvider).valueOrNull?.currentSpace;
 });
 
 /// Convenience provider for space members.
 final spaceMembersProvider = Provider<List<SpaceMember>>((ref) {
-  return ref.watch(spaceProvider).members;
+  return ref.watch(spaceProvider).valueOrNull?.members ?? [];
 });

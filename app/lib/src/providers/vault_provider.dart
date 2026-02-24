@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:studio_pair/src/providers/service_providers.dart';
 import 'package:studio_pair/src/services/api/vault_api.dart';
+import 'package:studio_pair_shared/studio_pair_shared.dart';
 
 /// Vault entry model.
 /// Note: password is never stored in state; always fetched and decrypted on demand.
@@ -41,55 +42,23 @@ class VaultEntry {
   final String createdAt;
 }
 
-/// Vault state.
-class VaultState {
-  const VaultState({
-    this.entries = const [],
-    this.searchQuery = '',
-    this.isLoading = false,
-    this.error,
-  });
+// ── Async notifier ──────────────────────────────────────────────────────
 
-  final List<VaultEntry> entries;
-  final String searchQuery;
-  final bool isLoading;
-  final String? error;
+/// Vault notifier managing password / credential entries.
+class VaultNotifier extends AsyncNotifier<List<VaultEntry>> {
+  VaultApi get _api => ref.read(vaultApiProvider);
 
-  VaultState copyWith({
-    List<VaultEntry>? entries,
-    String? searchQuery,
-    bool? isLoading,
-    String? error,
-    bool clearError = false,
-  }) {
-    return VaultState(
-      entries: entries ?? this.entries,
-      searchQuery: searchQuery ?? this.searchQuery,
-      isLoading: isLoading ?? this.isLoading,
-      error: clearError ? null : (error ?? this.error),
-    );
-  }
-}
-
-/// Vault state notifier managing password / credential entries.
-class VaultNotifier extends StateNotifier<VaultState> {
-  VaultNotifier(this._api) : super(const VaultState());
-
-  final VaultApi _api;
+  @override
+  Future<List<VaultEntry>> build() async => [];
 
   /// Load vault entries for a space.
   Future<void> loadEntries(String spaceId, {String? search}) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.listEntries(spaceId, search: search);
       final items = parseList(response.data);
-      final entries = items.map(VaultEntry.fromJson).toList();
-
-      state = state.copyWith(entries: entries, isLoading: false);
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-    }
+      return items.map(VaultEntry.fromJson).toList();
+    });
   }
 
   /// Create a new vault entry.
@@ -101,9 +70,9 @@ class VaultNotifier extends StateNotifier<VaultState> {
     required String password,
     bool isShared = false,
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previousEntries = state.valueOrNull ?? [];
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.createEntry(
         spaceId,
         domain: domain,
@@ -115,33 +84,20 @@ class VaultNotifier extends StateNotifier<VaultState> {
         response.data as Map<String, dynamic>,
       );
 
-      state = state.copyWith(
-        entries: [...state.entries, newEntry],
-        isLoading: false,
-      );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return [...previousEntries, newEntry];
+    });
+    return !state.hasError;
   }
 
   /// Delete a vault entry.
   Future<bool> deleteEntry(String spaceId, String entryId) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previousEntries = state.valueOrNull ?? [];
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       await _api.deleteEntry(spaceId, entryId);
-
-      state = state.copyWith(
-        entries: state.entries.where((e) => e.id != entryId).toList(),
-        isLoading: false,
-      );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return previousEntries.where((e) => e.id != entryId).toList();
+    });
+    return !state.hasError;
   }
 
   /// Share a vault entry with specific users.
@@ -150,17 +106,13 @@ class VaultNotifier extends StateNotifier<VaultState> {
     String entryId,
     List<String> userIds,
   ) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previousEntries = state.valueOrNull ?? [];
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       await _api.shareEntry(spaceId, entryId, userIds);
-
-      state = state.copyWith(isLoading: false);
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+      return previousEntries;
+    });
+    return !state.hasError;
   }
 
   /// Fetch the decrypted password for a specific entry on demand.
@@ -170,36 +122,32 @@ class VaultNotifier extends StateNotifier<VaultState> {
       final response = await _api.getEntry(spaceId, entryId);
       final data = response.data as Map<String, dynamic>;
       return data['encrypted_blob'] as String? ?? data['password'] as String?;
+    } on AppFailure {
+      return null;
     } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
       return null;
     }
   }
-
-  /// Set the search query for filtering entries locally.
-  void setSearchQuery(String query) {
-    state = state.copyWith(searchQuery: query);
-  }
-
-  /// Clear any error state.
-  void clearError() {
-    state = state.copyWith(clearError: true);
-  }
 }
 
-/// Vault state provider.
-final vaultProvider = StateNotifierProvider<VaultNotifier, VaultState>((ref) {
-  return VaultNotifier(ref.watch(vaultApiProvider));
-});
+/// Vault async provider.
+final vaultProvider = AsyncNotifierProvider<VaultNotifier, List<VaultEntry>>(
+  VaultNotifier.new,
+);
+
+// ── Filter state providers ──────────────────────────────────────────────
+
+/// Search query for filtering vault entries locally.
+final vaultSearchQueryProvider = StateProvider<String>((ref) => '');
+
+// ── Convenience providers ───────────────────────────────────────────────
 
 /// Convenience provider for filtered vault entries (by search query).
 final vaultEntriesProvider = Provider<List<VaultEntry>>((ref) {
-  final vaultState = ref.watch(vaultProvider);
-  final query = vaultState.searchQuery.toLowerCase();
-  if (query.isEmpty) {
-    return vaultState.entries;
-  }
-  return vaultState.entries.where((e) {
+  final entries = ref.watch(vaultProvider).valueOrNull ?? [];
+  final query = ref.watch(vaultSearchQueryProvider).toLowerCase();
+  if (query.isEmpty) return entries;
+  return entries.where((e) {
     return e.label.toLowerCase().contains(query) ||
         e.domain.toLowerCase().contains(query) ||
         (e.username?.toLowerCase().contains(query) ?? false);
@@ -208,5 +156,5 @@ final vaultEntriesProvider = Provider<List<VaultEntry>>((ref) {
 
 /// Convenience provider for the total vault entry count.
 final vaultEntryCountProvider = Provider<int>((ref) {
-  return ref.watch(vaultProvider).entries.length;
+  return (ref.watch(vaultProvider).valueOrNull ?? []).length;
 });

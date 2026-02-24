@@ -37,7 +37,7 @@ const _publicRoutes = {'/login', '/register', '/forgot-password'};
 /// without causing a full router rebuild.
 class _AuthNotifierListenable extends ChangeNotifier {
   _AuthNotifierListenable(this._ref) {
-    _ref.listen<AuthState>(authProvider, (_, __) {
+    _ref.listen<AsyncValue<AppUser?>>(authProvider, (_, __) {
       notifyListeners();
     });
   }
@@ -57,7 +57,7 @@ final routerProvider = Provider<GoRouter>((ref) {
     debugLogDiagnostics: kDebugMode,
     refreshListenable: refreshListenable,
     redirect: (context, state) {
-      final isAuthenticated = ref.read(authProvider).isAuthenticated;
+      final isAuthenticated = ref.read(authProvider).valueOrNull != null;
       final currentPath = state.uri.path;
       final isPublicRoute = _publicRoutes.contains(currentPath);
       final isOnboarding = currentPath == '/onboarding';

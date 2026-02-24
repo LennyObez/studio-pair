@@ -40,62 +40,52 @@ class LocationShare {
   final int? etaMinutes;
 }
 
-/// Location state.
-class LocationState {
-  const LocationState({
+/// Composite data class for location state.
+class LocationData {
+  const LocationData({
     this.activeShares = const [],
     this.myActiveShare,
     this.isSharing = false,
-    this.isLoading = false,
-    this.error,
   });
 
   final List<LocationShare> activeShares;
   final LocationShare? myActiveShare;
   final bool isSharing;
-  final bool isLoading;
-  final String? error;
 
-  LocationState copyWith({
+  LocationData copyWith({
     List<LocationShare>? activeShares,
     LocationShare? myActiveShare,
     bool? isSharing,
-    bool? isLoading,
-    String? error,
-    bool clearError = false,
     bool clearMyActiveShare = false,
   }) {
-    return LocationState(
+    return LocationData(
       activeShares: activeShares ?? this.activeShares,
       myActiveShare: clearMyActiveShare
           ? null
           : (myActiveShare ?? this.myActiveShare),
       isSharing: isSharing ?? this.isSharing,
-      isLoading: isLoading ?? this.isLoading,
-      error: clearError ? null : (error ?? this.error),
     );
   }
 }
 
-/// Location state notifier managing location sharing.
-class LocationNotifier extends StateNotifier<LocationState> {
-  LocationNotifier(this._api) : super(const LocationState());
+// ── Async notifier ──────────────────────────────────────────────────────
 
-  final LocationApi _api;
+/// Location notifier managing location sharing.
+class LocationNotifier extends AsyncNotifier<LocationData> {
+  LocationApi get _api => ref.read(locationApiProvider);
+
+  @override
+  Future<LocationData> build() async => const LocationData();
 
   /// Load active location shares for a space.
   Future<void> loadActiveShares(String spaceId) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.getActiveShares(spaceId);
       final items = parseList(response.data);
       final shares = items.map(LocationShare.fromJson).toList();
-
-      state = state.copyWith(activeShares: shares, isLoading: false);
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-    }
+      return const LocationData().copyWith(activeShares: shares);
+    });
   }
 
   /// Start sharing live location.
@@ -106,9 +96,9 @@ class LocationNotifier extends StateNotifier<LocationState> {
     int durationMinutes, {
     String type = 'live',
   }) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const LocationData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       final response = await _api.startSharing(
         spaceId,
         latitude: lat,
@@ -121,17 +111,13 @@ class LocationNotifier extends StateNotifier<LocationState> {
         response.data as Map<String, dynamic>,
       );
 
-      state = state.copyWith(
+      return previous.copyWith(
         myActiveShare: share,
         isSharing: true,
-        activeShares: [...state.activeShares, share],
-        isLoading: false,
+        activeShares: [...previous.activeShares, share],
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
   /// Update the current shared location coordinates.
@@ -141,69 +127,59 @@ class LocationNotifier extends StateNotifier<LocationState> {
     double lat,
     double lng,
   ) async {
-    try {
+    final previous = state.valueOrNull ?? const LocationData();
+    state = await AsyncValue.guard(() async {
       final response = await _api.updateLocation(spaceId, shareId, lat, lng);
       final updated = LocationShare.fromJson(
         response.data as Map<String, dynamic>,
       );
 
-      final updatedShares = state.activeShares.map((share) {
-        if (share.id == shareId) {
-          return updated;
-        }
+      final updatedShares = previous.activeShares.map((share) {
+        if (share.id == shareId) return updated;
         return share;
       }).toList();
 
-      var updatedMyShare = state.myActiveShare;
-      if (state.myActiveShare?.id == shareId) {
+      var updatedMyShare = previous.myActiveShare;
+      if (previous.myActiveShare?.id == shareId) {
         updatedMyShare = updated;
       }
 
-      state = state.copyWith(
+      return previous.copyWith(
         activeShares: updatedShares,
         myActiveShare: updatedMyShare,
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
   /// Stop sharing location.
   Future<bool> stopSharing(String spaceId, String shareId) async {
-    state = state.copyWith(isLoading: true, clearError: true);
-
-    try {
+    final previous = state.valueOrNull ?? const LocationData();
+    state = const AsyncLoading();
+    state = await AsyncValue.guard(() async {
       await _api.stopSharing(spaceId, shareId);
-
-      state = state.copyWith(
-        activeShares: state.activeShares.where((s) => s.id != shareId).toList(),
+      return previous.copyWith(
+        activeShares: previous.activeShares
+            .where((s) => s.id != shareId)
+            .toList(),
         isSharing: false,
         clearMyActiveShare: true,
-        isLoading: false,
       );
-      return true;
-    } catch (e) {
-      state = state.copyWith(isLoading: false, error: extractErrorMessage(e));
-      return false;
-    }
+    });
+    return !state.hasError;
   }
 
   /// Send a one-time safe ping with current location.
   Future<bool> sendSafePing(String spaceId, double lat, double lng) async {
-    try {
+    final previous = state.valueOrNull ?? const LocationData();
+    state = await AsyncValue.guard(() async {
       final response = await _api.sendSafePing(spaceId, lat, lng);
       final ping = LocationShare.fromJson(
         response.data as Map<String, dynamic>,
       );
-
-      state = state.copyWith(activeShares: [...state.activeShares, ping]);
-      return true;
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
-      return false;
-    }
+      return previous.copyWith(activeShares: [...previous.activeShares, ping]);
+    });
+    return !state.hasError;
   }
 
   /// Share an ETA to a destination.
@@ -214,7 +190,8 @@ class LocationNotifier extends StateNotifier<LocationState> {
     required String destination,
     required int etaMinutes,
   }) async {
-    try {
+    final previous = state.valueOrNull ?? const LocationData();
+    state = await AsyncValue.guard(() async {
       final response = await _api.shareETA(
         spaceId,
         latitude: lat,
@@ -229,33 +206,27 @@ class LocationNotifier extends StateNotifier<LocationState> {
         response.data as Map<String, dynamic>,
       );
 
-      state = state.copyWith(activeShares: [...state.activeShares, etaShare]);
-      return true;
-    } catch (e) {
-      state = state.copyWith(error: extractErrorMessage(e));
-      return false;
-    }
-  }
-
-  /// Clear any error state.
-  void clearError() {
-    state = state.copyWith(clearError: true);
+      return previous.copyWith(
+        activeShares: [...previous.activeShares, etaShare],
+      );
+    });
+    return !state.hasError;
   }
 }
 
-/// Location state provider.
-final locationProvider = StateNotifierProvider<LocationNotifier, LocationState>(
-  (ref) {
-    return LocationNotifier(ref.watch(locationApiProvider));
-  },
+/// Location async provider.
+final locationProvider = AsyncNotifierProvider<LocationNotifier, LocationData>(
+  LocationNotifier.new,
 );
+
+// ── Convenience providers ───────────────────────────────────────────────
 
 /// Convenience provider for active location shares.
 final activeSharesProvider = Provider<List<LocationShare>>((ref) {
-  return ref.watch(locationProvider).activeShares;
+  return ref.watch(locationProvider).valueOrNull?.activeShares ?? [];
 });
 
 /// Convenience provider for whether the current user is sharing location.
 final isSharingProvider = Provider<bool>((ref) {
-  return ref.watch(locationProvider).isSharing;
+  return ref.watch(locationProvider).valueOrNull?.isSharing ?? false;
 });
