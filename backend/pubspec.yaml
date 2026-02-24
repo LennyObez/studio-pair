@@ -15,7 +15,7 @@ dependencies:
   json_annotation: ^4.8.1
   uuid: ^4.2.1
   crypto: ^3.0.3
-  pointycastle: ^3.7.3
+  pointycastle: ^4.0.0
   jaguar_jwt: ^3.0.0
   args: ^2.4.2
   logging: ^1.2.0
