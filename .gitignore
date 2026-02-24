@@ -9,16 +9,6 @@ build/
 .flutter-plugins
 .flutter-plugins-dependencies
 *.dart_tool
-pubspec.lock
-
-# Generated Dart files
-*.g.dart
-*.freezed.dart
-*.mocks.dart
-*.config.dart
-
-# Drift generated files
-*.drift.dart
 
 # ---------- Build Outputs ----------
 build/
