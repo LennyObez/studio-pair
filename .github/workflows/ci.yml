@@ -1,0 +1,165 @@
+name: CI
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+
+jobs:
+  # Shared package
+  shared:
+    name: Shared Package
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: shared
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+      - run: dart analyze
+      - run: dart format --set-exit-if-changed .
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart test
+
+  # Backend
+  backend:
+    name: Backend API
+    runs-on: ubuntu-latest
+    needs: shared
+    defaults:
+      run:
+        working-directory: backend
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: studio_pair
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: studio_pair_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dart-lang/setup-dart@v1
+        with:
+          sdk: stable
+      - run: dart pub get
+        working-directory: shared
+      - run: dart pub get
+      - run: dart analyze
+      - run: dart format --set-exit-if-changed .
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: dart test
+        env:
+          DATABASE_URL: postgres://studio_pair:testpassword@localhost:5432/studio_pair_test
+
+  # Flutter App
+  app:
+    name: Flutter App
+    runs-on: ubuntu-latest
+    needs: shared
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+      - run: dart pub get
+        working-directory: shared
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: dart format --set-exit-if-changed lib/ test/
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter test
+
+  # Database migrations check
+  migrations:
+    name: Database Migrations
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: studio_pair
+          POSTGRES_PASSWORD: testpassword
+          POSTGRES_DB: studio_pair_migrations
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v6
+      - name: Run migrations
+        run: |
+          for f in database/migrations/*.sql; do
+            echo "Running $f..."
+            PGPASSWORD=testpassword psql -h localhost -U studio_pair -d studio_pair_migrations -f "$f"
+          done
+
+  # Build APK (on main branch only)
+  build-android:
+    name: Build Android APK
+    runs-on: ubuntu-latest
+    needs: [app, backend]
+    if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+      - run: dart pub get
+        working-directory: shared
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter build apk --release
+      - uses: actions/upload-artifact@v6
+        with:
+          name: android-apk
+          path: app/build/app/outputs/flutter-apk/app-release.apk
+
+  # Build iOS (on main branch only)
+  build-ios:
+    name: Build iOS
+    runs-on: macos-latest
+    needs: [app, backend]
+    if: github.ref == 'refs/heads/main'
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v6
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: '3.24.0'
+          channel: stable
+          cache: true
+      - run: dart pub get
+        working-directory: shared
+      - run: flutter pub get
+      - run: dart run build_runner build --delete-conflicting-outputs
+      - run: flutter build ios --release --no-codesign
